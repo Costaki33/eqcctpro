@@ -461,6 +461,7 @@ def run_EQCCT_mseed(
         p_model_filepath: str, 
         s_model_filepath: str, 
         number_of_concurrent_predictions: int, 
+        mode:str,  
         gpu_limit: float = None, 
         intra_threads: int = 1, 
         inter_threads: int = 1, 
@@ -471,12 +472,20 @@ def run_EQCCT_mseed(
     run_EQCCT_mseed enables users to use EQCCT to generate picks on MSEED files
     """
     
+    # 'Mode' parameter is the different input types that are appropriate for run_EQCCT_mseed to handle 
+    # 'single station' mode for where the user only inputs 1 directory that has in its contents the 3 MSEED files 
+    # or 
+    # 'network' mode for where the user provides a parent directory that is made up of sub-dirs of stations which are comprised of MSEED files 
+    valid_modes = {"single station", "network"}
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mode '{mode}'. Choose either 'single station' or 'network'.")
+    
     if use_gpu and gpu_limit is None: 
         raise ValueError("gpu_limit is required when use_gpu=True")
         exit()
     
-    if use_gpu is False: 
-        # Using CPUs only 
+    # CPU Usage - Network Mode 
+    if use_gpu is False and mode == "network": 
         tf_environ(gpu_id=1, intra_threads=intra_threads, inter_threads=inter_threads)
         mseed_predictor(input_dir=input_dir, 
                 output_dir=output_dir, 
@@ -487,6 +496,10 @@ def run_EQCCT_mseed(
                 s_model=s_model_filepath, 
                 number_of_concurrent_predictions=number_of_concurrent_predictions, 
                 ray_cpus=ray_cpus)
+        
+    # # GPU Usage   
+    # if use_gpu is True: 
+    #     tf_environ(gpu_id=-1, gpu_limit= intra_threads=intra_threads, inter_threads=inter_threads)
         
     
     
@@ -560,6 +573,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
     
     ray.init(ignore_reinit_error=True, num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using CPUs
     print(f"[{datetime.now()}] Ray Sucessfully Initialized with {ray_cpus} CPUs")
+    
     args = {
     "input_dir": input_dir,
     "output_dir": output_dir,
@@ -577,6 +591,18 @@ def mseed_predictor(input_dir='downloads_mseeds',
     "stations_filters": stations_filters
     }
 
+    # Ensure Output Dir exists 
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Ensure logfile exists before continuing 
+    if not os.path.exists(log_file): 
+        print(f"Log file not found: '{log_file}'. Creating log file...")
+        with open(log_file, "w") as f: 
+            f.write("")
+            print(f"Log file: {log_file} created.")
+    else: 
+        print(f"Log file '{log_file}' already exists.")
+        
     with open(log_file, mode="w", buffering=1) as log:
         out_dir = os.path.join(os.getcwd(), str(args['output_dir']))       
         try:
@@ -586,6 +612,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
                 station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("/")[-1] != ".DS_Store"]
 
             station_list = sorted(set(station_list))
+            print(f"Station list:\n{station_list}")
         except Exception as exp:
             log.write(f"{exp}\n")
             return
