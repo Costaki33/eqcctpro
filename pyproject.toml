@@ -3,7 +3,7 @@ name = "eqcctplus"
 authors = [
     {name = "Constantinos Skevoiflax", email = "constantinos.skevofilax@austin.utexas.edu"}, 
     {name = "Victor Sallez, email = "victor.salles@beg.utexas.edu"},
-    {name = "Camilo Munoz, email = "camilo.munoz@beg.utexas.edu"}]
+    {name = "Camilo Eduardo Munoz, email = "camilo.munoz@beg.utexas.edu"}]
 description = "Python package that enables the utilization of EQCCT (EarthQuake Compact Convolutional Transformer) to generate picks on seismic waveform data" 
 readme = "README.md"
 version = "0.0.1"

@@ -4,6 +4,7 @@ import time
 import glob
 import obspy
 import shutil
+import logging
 import platform
 import numpy as np
 import pandas as pd
@@ -360,9 +361,10 @@ def create_cct_modelS(inputs):
     return representation
 
 
-def tf_environ(gpu_id, gpu_limit=None, max_system_memory_gb=None,intra_threads=None, inter_threads=None):
+def tf_environ(gpu_id, gpu_limit=None, intra_threads=None, inter_threads=None):
+    print(f"\neqcctplus\n-----------------------------\nTensorflow and Ray Configuration...\n")
     tf.debugging.set_log_device_placement(True)
-    if gpu_id != -1:
+    if gpu_id is True:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
         print(f"[{datetime.now()}] GPU processing enabled.")
         gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -382,12 +384,12 @@ def tf_environ(gpu_id, gpu_limit=None, max_system_memory_gb=None,intra_threads=N
                             [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit_mb)]
                         )
 
-                # Enable Unified Memory and limit system memory usage
-                if max_system_memory_gb:
-                    max_system_memory_mb = 50 * 1024 # max_system_memory_gb * 1024  # Convert GB to MB
-                    # Use CUDA_VISIBLE_DEVICES and set the system memory usage limit for Unified Memory
-                    os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-                    os.environ['TF_GPU_SYSTEM_MEMORY_LIMIT'] = str(max_system_memory_mb)
+                # # Enable Unified Memory and limit system memory usage
+                # if max_system_memory_gb:
+                #     max_system_memory_mb = 50 * 1024 # max_system_memory_gb * 1024  # Convert GB to MB
+                #     # Use CUDA_VISIBLE_DEVICES and set the system memory usage limit for Unified Memory
+                #     os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+                #     os.environ['TF_GPU_SYSTEM_MEMORY_LIMIT'] = str(max_system_memory_mb)
 
                 print(f"[{datetime.now()}] GPU and system memory configuration enabled.")
             except RuntimeError as e:
@@ -400,11 +402,11 @@ def tf_environ(gpu_id, gpu_limit=None, max_system_memory_gb=None,intra_threads=N
         print(f"[{datetime.now()}] GPU processing disabled, using CPU.")
     if intra_threads is not None:
         tf.config.threading.set_intra_op_parallelism_threads(intra_threads)
-        print(f"\nIntraparallelism thread successfully set")
+        print(f"[{datetime.now()}] Intraparallelism thread successfully set")
     if inter_threads is not None:
         tf.config.threading.set_inter_op_parallelism_threads(inter_threads)
-        print(f"Interparallelism thread successfully set")
-    print(f"Tensorflow successfully set up for model operations\n")
+        print(f"[{datetime.now()}] Interparallelism thread successfully set")
+    print(f"[{datetime.now()}] Tensorflow successfully set up for model operations")
 
 
 def load_eqcct_model(input_modelP, input_modelS, log_file="results/logs/model.log"):
@@ -465,7 +467,8 @@ def mseed_predictor(input_dir='downloads_mseeds',
               stations_filters=None,
               p_model=None,
               s_model=None,
-              number_of_concurrent_predictor=None): 
+              number_of_concurrent_predictions=None,
+              ray_cpus=None): 
     
     """ 
     
@@ -513,7 +516,9 @@ def mseed_predictor(input_dir='downloads_mseeds',
     --------        
       
     """ 
- 
+    
+    ray.init(ignore_reinit_error=True, num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using CPUs
+    print(f"[{datetime.now()}] Ray Sucessfully Initialized with {ray_cpus} CPUs")
     args = {
     "input_dir": input_dir,
     "output_dir": output_dir,
@@ -557,8 +562,11 @@ def mseed_predictor(input_dir='downloads_mseeds',
 
         # Submit tasks to ray in a queue
         tasks_queue = []
-        max_pending_tasks = number_of_concurrent_predictor
+        max_pending_tasks = number_of_concurrent_predictions
         log.write(f"[{datetime.now()}] Started EQCCT picking process.\n")
+        start_time = time.time() 
+        print(f"\n-----------------------------\nEQCCT Pick Detection Process...\n\n[{datetime.now()}] Starting EQCCT...")
+        print(f"[{datetime.now()}] Processing a total of {len(tasks_predictor)} stations, {max_pending_tasks} at a time...")
         for i in range(len(tasks_predictor)):
             while True:
                 # Add new task to queue while max is not reached
@@ -582,6 +590,8 @@ def mseed_predictor(input_dir='downloads_mseeds',
                 log.flush()
         log.write("------- END OF FILE -------\n")
         log.flush()
+        end_time = time.time()
+        print(f"[{datetime.now()}] EQCCT Pick Detection Process Complete! Picks are saved at {output_dir}\n[{datetime.now()}] Process Runtime: {end_time - start_time:.2f} s")
 
 
 @ray.remote
