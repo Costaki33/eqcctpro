@@ -1,5 +1,6 @@
 
 import os 
+
 from predictor import run_EQCCT_mseed
 
 input_mseed_directory_path = '/home/skevofilaxc/eqcctplus/mseed/20241215T115800Z_20241215T120100Z'# '/home/skevofilaxc/eqcctplus/ALPN' 

@@ -1,3 +1,4 @@
+import os
 import ray
 import csv
 import time
@@ -10,9 +11,9 @@ import numpy as np
 import pandas as pd
 from os import listdir
 from io import StringIO
+from progress.bar import IncrementalBar
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
-import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '1'
 os.environ['KERAS_BACKEND'] = 'tensorflow'
@@ -362,7 +363,17 @@ def create_cct_modelS(inputs):
 
 
 def tf_environ(gpu_id, gpu_limit=None, intra_threads=None, inter_threads=None):
-    print(f"\neqcctplus\n-----------------------------\nTensorflow and Ray Configuration...\n")
+    print(r"""
+                      _         _           
+                     | |       | |          
+   ___  __ _  ___ ___| |_ _ __ | |_   _ ___ 
+  / _ \/ _` |/ __/ __| __| '_ \| | | | / __|
+ |  __/ (_| | (_| (__| |_| |_) | | |_| \__ \
+  \___|\__, |\___\___|\__| .__/|_|\__,_|___/
+          | |            | |                
+          |_|            |_|                
+""")
+    print(f"\n-----------------------------\nTensorflow and Ray Configuration...\n")
     tf.debugging.set_log_device_placement(True)
     if gpu_id != -1:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
@@ -522,7 +533,8 @@ def mseed_predictor(input_dir='downloads_mseeds',
               p_model=None,
               s_model=None,
               number_of_concurrent_predictions=None,
-              ray_cpus=None): 
+              ray_cpus=None,
+              mopde=None): 
     
     """ 
     
@@ -612,7 +624,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
                 station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("/")[-1] != ".DS_Store"]
 
             station_list = sorted(set(station_list))
-            print(f"Station list:\n{station_list}")
+            # print(f"Station list:\n{station_list}")
         except Exception as exp:
             log.write(f"{exp}\n")
             return
@@ -635,27 +647,30 @@ def mseed_predictor(input_dir='downloads_mseeds',
         start_time = time.time() 
         print(f"\n-----------------------------\nEQCCT Pick Detection Process...\n\n[{datetime.now()}] Starting EQCCT...")
         print(f"[{datetime.now()}] Processing a total of {len(tasks_predictor)} stations, {max_pending_tasks} at a time...")
-        for i in range(len(tasks_predictor)):
-            while True:
-                # Add new task to queue while max is not reached
-                if len(tasks_queue) < max_pending_tasks:
-                    tasks_queue.append(parallel_predict.remote(tasks_predictor[i]))
-                    break
-                # If there are more tasks than maximum, just process them
-                else:
-                    tasks_finished, tasks_queue = ray.wait(tasks_queue, num_returns=1, timeout=None)
-                    for finished_task in tasks_finished:
-                        log_entry = ray.get(finished_task)
-                        log.write(log_entry + "\n")
-                        log.flush()
+        with IncrementalBar("Processing Stations", max=len(tasks_predictor)) as bar:
+            for i in range(len(tasks_predictor)):
+                while True:
+                    # Add new task to queue while max is not reached
+                    if len(tasks_queue) < max_pending_tasks:
+                        tasks_queue.append(parallel_predict.remote(tasks_predictor[i]))
+                        break
+                    # If there are more tasks than maximum, just process them
+                    else:
+                        tasks_finished, tasks_queue = ray.wait(tasks_queue, num_returns=1, timeout=None)
+                        for finished_task in tasks_finished:
+                            log_entry = ray.get(finished_task)
+                            log.write(log_entry + "\n")
+                            log.flush()
+                            bar.next()
 
-        # After adding all the tasks to queue, process what's left
-        while tasks_queue:
-            tasks_finished, tasks_queue = ray.wait(tasks_queue, num_returns=1, timeout=None)
-            for finished_task in tasks_finished:
-                log_entry = ray.get(finished_task)
-                log.write(log_entry + "\n")
-                log.flush()
+            # After adding all the tasks to queue, process what's left
+            while tasks_queue:
+                tasks_finished, tasks_queue = ray.wait(tasks_queue, num_returns=1, timeout=None)
+                for finished_task in tasks_finished:
+                    log_entry = ray.get(finished_task)
+                    log.write(log_entry + "\n")
+                    log.flush()
+                    bar.next() 
         log.write("------- END OF FILE -------\n")
         log.flush()
         end_time = time.time()
