@@ -364,7 +364,7 @@ def create_cct_modelS(inputs):
 def tf_environ(gpu_id, gpu_limit=None, intra_threads=None, inter_threads=None):
     print(f"\neqcctplus\n-----------------------------\nTensorflow and Ray Configuration...\n")
     tf.debugging.set_log_device_placement(True)
-    if gpu_id is True:
+    if gpu_id != -1:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
         print(f"[{datetime.now()}] GPU processing enabled.")
         gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -450,6 +450,47 @@ def load_eqcct_model(input_modelP, input_modelS, log_file="results/logs/model.lo
 
     return model
 
+
+
+def run_EQCCT_mseed(
+        use_gpu: bool, 
+        ray_cpus: int, 
+        input_dir: str, 
+        output_dir: str, 
+        log_filepath: str, 
+        p_model_filepath: str, 
+        s_model_filepath: str, 
+        number_of_concurrent_predictions: int, 
+        gpu_limit: float = None, 
+        intra_threads: int = 1, 
+        inter_threads: int = 1, 
+        P_threshold: float = 0.001, 
+        S_threshold: float = 0.02
+):
+    """
+    run_EQCCT_mseed enables users to use EQCCT to generate picks on MSEED files
+    """
+    
+    if use_gpu and gpu_limit is None: 
+        raise ValueError("gpu_limit is required when use_gpu=True")
+        exit()
+    
+    if use_gpu is False: 
+        # Using CPUs only 
+        tf_environ(gpu_id=1, intra_threads=intra_threads, inter_threads=inter_threads)
+        mseed_predictor(input_dir=input_dir, 
+                output_dir=output_dir, 
+                log_file=log_filepath, 
+                P_threshold=P_threshold, 
+                S_threshold=S_threshold, 
+                p_model=p_model_filepath, 
+                s_model=s_model_filepath, 
+                number_of_concurrent_predictions=number_of_concurrent_predictions, 
+                ray_cpus=ray_cpus)
+        
+    
+    
+    
         
 def mseed_predictor(input_dir='downloads_mseeds',
               output_dir="detections",
