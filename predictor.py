@@ -18,7 +18,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '1'
 os.environ['KERAS_BACKEND'] = 'tensorflow'
 import tensorflow as tf
-
+import pynvml 
 import warnings
 warnings.filterwarnings("ignore")
 from silence_tensorflow import silence_tensorflow
@@ -362,7 +362,7 @@ def create_cct_modelS(inputs):
     return representation
 
 
-def tf_environ(gpu_id, gpu_limit=None, intra_threads=None, inter_threads=None):
+def tf_environ(gpu_id, gpu_memory_limit_mb=None, gpus_to_use=None, intra_threads=None, inter_threads=None):
     print(r"""
                       _         _           
                      | |       | |          
@@ -372,36 +372,23 @@ def tf_environ(gpu_id, gpu_limit=None, intra_threads=None, inter_threads=None):
   \___|\__, |\___\___|\__| .__/|_|\__,_|___/
           | |            | |                
           |_|            |_|                
-""")
+    """)
     print(f"\n-----------------------------\nTensorflow and Ray Configuration...\n")
     tf.debugging.set_log_device_placement(True)
+    
     if gpu_id != -1:
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-        print(f"[{datetime.now()}] GPU processing enabled.")
-        gpus = tf.config.experimental.list_physical_devices('GPU')
+        os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(map(str, gpus_to_use)) # Sets CUDA_VISIBLE_DEVICES = to the selected GPUs
+        print(f"[{datetime.now()}] GPU processing enabled. Using GPUs: {gpus_to_use}")
+        gpus = tf.config.experimental.list_physical_devices('GPU') # Lists all available GPUs to Tensorflow 
+        
         if gpus:
             try:
                 for gpu in gpus:
-                    # Enable memory growth to allow the GPU to allocate memory as needed
-                    tf.config.experimental.set_memory_growth(gpu, True) 
-
-                # Commented out the limitations of the gpu memory usage because we want to allow the GPU to allocate memory dynamically 
-                    # Limit GPU memory usage if gpu_limit is provided
-                    if gpu_limit:
-                        total_gpu_memory_mb = 49140  # Replace with actual GPU memory in MB (from nvidia-smi)
-                        memory_limit_mb = gpu_limit * total_gpu_memory_mb
+                    if gpu_memory_limit_mb:
                         tf.config.experimental.set_virtual_device_configuration(
                             gpu,
-                            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit_mb)]
+                            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=gpu_memory_limit_mb)]
                         )
-
-                # # Enable Unified Memory and limit system memory usage
-                # if max_system_memory_gb:
-                #     max_system_memory_mb = 50 * 1024 # max_system_memory_gb * 1024  # Convert GB to MB
-                #     # Use CUDA_VISIBLE_DEVICES and set the system memory usage limit for Unified Memory
-                #     os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-                #     os.environ['TF_GPU_SYSTEM_MEMORY_LIMIT'] = str(max_system_memory_mb)
-
                 print(f"[{datetime.now()}] GPU and system memory configuration enabled.")
             except RuntimeError as e:
                 print(f"Error configuring TensorFlow: {e}")
@@ -462,7 +449,55 @@ def load_eqcct_model(input_modelP, input_modelS, log_file="results/logs/model.lo
     return model
 
 
+def get_vram():
+    """Prompt the user for VRAM input and ensure it's a valid float."""
+    while True:
+        try:
+            vram = float(input("Enter how much VRAM the GPU can use (MB): ").strip())
+            if vram > 0:
+                return vram
+            print("VRAM must be a positive number.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
 
+
+def get_gpu_vram():
+    """Retrieve total and free VRAM (in GB) for the current GPU."""
+    pynvml.nvmlInit()  # Initialize NVML
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # Get first GPU
+    total_vram = pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024**3)  # Convert bytes to GB
+    free_vram = pynvml.nvmlDeviceGetMemoryInfo(handle).free / (1024**3)  # Convert bytes to GB
+    pynvml.nvmlShutdown()  # Shutdown NVML
+    return total_vram, free_vram
+
+def list_gpu_ids():
+    """List all available GPU IDs on the system."""
+    pynvml.nvmlInit()  # Initialize NVML
+    gpu_count = pynvml.nvmlDeviceGetCount()  # Get number of GPUs
+    gpu_ids = list(range(gpu_count))  # Create a list of GPU indices
+    pynvml.nvmlShutdown()  # Shutdown NVML
+    return gpu_ids
+
+def get_valid_gpu_choice(available_gpus):
+    """Prompt user to select GPU IDs and ensure they are valid."""
+    while True:
+        choice = input(f"Which GPU ID(s) would you like to use? (comma-separated, e.g., 0,1) or 'all' for all: ").strip()
+        
+        if choice.lower() == "all":
+            return available_gpus  # Use all available GPUs
+        
+        try:
+            selected_gpus = [int(x.strip()) for x in choice.split(",")]
+            
+            # Ensure all selected GPUs exist in the available list
+            if all(gpu in available_gpus for gpu in selected_gpus):
+                return selected_gpus
+            else:
+                print(f"Invalid choice. Please select from available GPUs: {available_gpus}")
+
+        except ValueError:
+            print("Invalid input. Please enter numeric GPU IDs separated by commas.")
+            
 def run_EQCCT_mseed(
         use_gpu: bool, 
         ray_cpus: int, 
@@ -473,7 +508,6 @@ def run_EQCCT_mseed(
         s_model_filepath: str, 
         number_of_concurrent_predictions: int, 
         mode:str,  
-        gpu_limit: float = None, 
         intra_threads: int = 1, 
         inter_threads: int = 1, 
         P_threshold: float = 0.001, 
@@ -490,14 +524,11 @@ def run_EQCCT_mseed(
     valid_modes = {"single_station", "network"}
     if mode not in valid_modes:
         raise ValueError(f"Invalid mode '{mode}'. Choose either 'single_station' or 'network'.")
-    
-    if use_gpu and gpu_limit is None: 
-        raise ValueError("gpu_limit is required when use_gpu=True")
-        exit()
+
     
     # CPU Usage
     if use_gpu is False: 
-        tf_environ(gpu_id=1, intra_threads=intra_threads, inter_threads=inter_threads)
+        tf_environ(gpu_id=-1, intra_threads=intra_threads, inter_threads=inter_threads)
         mseed_predictor(input_dir=input_dir, 
                 output_dir=output_dir, 
                 log_file=log_filepath, 
@@ -507,11 +538,58 @@ def run_EQCCT_mseed(
                 s_model=s_model_filepath, 
                 number_of_concurrent_predictions=number_of_concurrent_predictions, 
                 ray_cpus=ray_cpus,
-                mode=mode)
+                mode=mode,
+                use_gpu=False)
         
-    # # GPU Usage   
-    # if use_gpu is True: 
-    #     tf_environ(gpu_id=-1, gpu_limit= intra_threads=intra_threads, inter_threads=inter_threads)
+    # GPU Usage   
+    if use_gpu is True: 
+        while True: 
+            choice = input("Would you like to set how much VRAM the GPU can use? (y/n): ").strip().lower()
+            if choice in {"y", "n"}:
+                break
+            print("Invalid input. Please enter 'y' or 'n'.")
+        
+        if choice == "y": 
+            free_vram_mb = get_vram()
+            print(f"VRAM set to {vram} MB.")
+        else:
+            # Setting VRAM
+            print(f"Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
+            total_vram, available_vram = get_gpu_vram()
+            print(f"Total VRAM: {total_vram:.2f} GB")
+            print(f"Available VRAM: {available_vram:.2f} GB")
+            # 95% of the Node's memory can be used by Ray and it's Raylets. 
+            # Beyond the threshold, Ray will begin to kill process to save the node's memory 
+            # If the free 
+            
+            if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
+                free_vram = total_vram * 0.9485        
+            
+            print(f"Using {round(free_vram, 2)} GB VRAM (within 94.85% VRAM threshold)")
+            free_vram_mb = free_vram * 1024 # Convert to MB 
+            
+            # Setting GPUs to use 
+            gpu_ids = list_gpu_ids()
+            print(f"Available GPU IDs: {gpu_ids}")
+            selected_gpus = get_valid_gpu_choice(gpu_ids)
+            print(f"Using GPU(s): {selected_gpus}")
+            
+        vram_per_task_mb = free_vram_mb / number_of_concurrent_predictions
+        
+        tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_per_task_mb, gpus_to_use=selected_gpus, intra_threads=intra_threads, inter_threads=inter_threads)
+        mseed_predictor(input_dir=input_dir, 
+                output_dir=output_dir, 
+                log_file=log_filepath, 
+                P_threshold=P_threshold, 
+                S_threshold=S_threshold, 
+                p_model=p_model_filepath, 
+                s_model=s_model_filepath, 
+                number_of_concurrent_predictions=number_of_concurrent_predictions, 
+                ray_cpus=ray_cpus,
+                mode=mode,
+                use_gpu=True,
+                gpu_id=selected_gpus, 
+                gpu_memory_limit_mb=vram_per_task_mb)
         
     
     
@@ -535,7 +613,9 @@ def mseed_predictor(input_dir='downloads_mseeds',
               s_model=None,
               number_of_concurrent_predictions=None,
               ray_cpus=None,
-              mode="network"): 
+              mode="network",
+              use_gpu=False,
+              gpu_memory_limit_mb=None): 
     
     """ 
     
@@ -583,10 +663,13 @@ def mseed_predictor(input_dir='downloads_mseeds',
     --------        
       
     """ 
-    
-    ray.init(ignore_reinit_error=True, num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using CPUs
-    print(f"[{datetime.now()}] Ray Sucessfully Initialized with {ray_cpus} CPUs")
-    
+    if use_gpu is False: 
+        ray.init(ignore_reinit_error=True, num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using CPUs
+        print(f"[{datetime.now()}] Ray Sucessfully Initialized with {ray_cpus} CPUs")
+    elif use_gpu is True: 
+        ray.init(ignore_reinit_error=True, num_gpus=len(gpu_id), num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using GPUs 
+        print(f"[{datetime.now()}] Ray Sucessfully Initialized with {len(gpu_id)} GPU(s) and {ray_cpus} CPU(s)")
+        
     args = {
     "input_dir": input_dir,
     "output_dir": output_dir,
@@ -661,7 +744,12 @@ def mseed_predictor(input_dir='downloads_mseeds',
                 while True:
                     # Add new task to queue while max is not reached
                     if len(tasks_queue) < max_pending_tasks:
-                        tasks_queue.append(parallel_predict.remote(tasks_predictor[i], mode))
+                        if use_gpu is False: 
+                            tasks_queue.append(parallel_predict.remote(tasks_predictor[i], mode, False, None))
+                        elif use_gpu is True: 
+                            gpu_allocation_per_task = len(gpu_id) / number_of_concurrent_predictions  # Ensure max_pending_tasks > 0 to avoid division by zero
+                            task = parallel_predict.options(num_gpus=gpu_allocation_per_task, num_cpus=0).remote(tasks_predictor[i], mode, True, gpu_memory_limit_mb)
+                            tasks_queue.append(task)
                         break
                     # If there are more tasks than maximum, just process them
                     else:
@@ -687,7 +775,22 @@ def mseed_predictor(input_dir='downloads_mseeds',
 
 
 @ray.remote
-def parallel_predict(predict_args, mode):
+def parallel_predict(predict_args, mode, gpu=False, gpu_memory_limit_mb=None):
+    
+    if gpu is True: 
+        # Ensure TensorFlow only sees its assigned VRAM
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+
+        if gpus:
+            try:
+                tf.config.experimental.set_virtual_device_configuration(
+                    gpus[0],
+                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=gpu_memory_limit_mb)]
+                )
+                print(f"[Task] VRAM Limited to {gpu_memory_limit_mb / 1024:.2f} GB")
+            except RuntimeError as e:
+                print(f"[Task] Error setting memory limit - {e}")
+    
     pos, station, out_dir, args = predict_args
     model = load_eqcct_model(args["p_model"], args["s_model"])
     save_dir = os.path.join(out_dir, str(station)+'_outputs')
