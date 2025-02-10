@@ -3,7 +3,7 @@ import os
 
 from predictor import run_EQCCT_mseed
 
-input_mseed_directory_path = '/home/skevofilaxc/eqcctplus/mseed/20241215T115800Z_20241215T120100Z'# '/home/skevofilaxc/eqcctplus/ALPN' 
+input_mseed_directory_path = '/home/skevofilaxc/eqcctplus/ALPN' # '/home/skevofilaxc/eqcctplus/mseed/20241215T115800Z_20241215T120100Z' 
 output_pick_directory_path = '/home/skevofilaxc/eqcctplus/outputs'
 log_file_path = '/home/skevofilaxc/eqcctplus/outputs/eqcctplus.log'
 
@@ -11,7 +11,7 @@ run_EQCCT_mseed(use_gpu=False,
                 intra_threads=1, 
                 inter_threads=1, 
                 ray_cpus=5,
-                mode='network', 
+                mode='single_station', 
                 input_dir=input_mseed_directory_path, 
                 output_dir=output_pick_directory_path, 
                 log_filepath=log_file_path, 

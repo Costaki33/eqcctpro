@@ -487,16 +487,16 @@ def run_EQCCT_mseed(
     # 'single station' mode for where the user only inputs 1 directory that has in its contents the 3 MSEED files 
     # or 
     # 'network' mode for where the user provides a parent directory that is made up of sub-dirs of stations which are comprised of MSEED files 
-    valid_modes = {"single station", "network"}
+    valid_modes = {"single_station", "network"}
     if mode not in valid_modes:
-        raise ValueError(f"Invalid mode '{mode}'. Choose either 'single station' or 'network'.")
+        raise ValueError(f"Invalid mode '{mode}'. Choose either 'single_station' or 'network'.")
     
     if use_gpu and gpu_limit is None: 
         raise ValueError("gpu_limit is required when use_gpu=True")
         exit()
     
-    # CPU Usage - Network Mode 
-    if use_gpu is False and mode == "network": 
+    # CPU Usage
+    if use_gpu is False: 
         tf_environ(gpu_id=1, intra_threads=intra_threads, inter_threads=inter_threads)
         mseed_predictor(input_dir=input_dir, 
                 output_dir=output_dir, 
@@ -506,7 +506,8 @@ def run_EQCCT_mseed(
                 p_model=p_model_filepath, 
                 s_model=s_model_filepath, 
                 number_of_concurrent_predictions=number_of_concurrent_predictions, 
-                ray_cpus=ray_cpus)
+                ray_cpus=ray_cpus,
+                mode=mode)
         
     # # GPU Usage   
     # if use_gpu is True: 
@@ -534,7 +535,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
               s_model=None,
               number_of_concurrent_predictions=None,
               ray_cpus=None,
-              mopde=None): 
+              mode="network"): 
     
     """ 
     
@@ -616,27 +617,35 @@ def mseed_predictor(input_dir='downloads_mseeds',
         print(f"Log file '{log_file}' already exists.")
         
     with open(log_file, mode="w", buffering=1) as log:
-        out_dir = os.path.join(os.getcwd(), str(args['output_dir']))       
-        try:
-            if platform.system() == 'Windows':
-                station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("\\")[-1] != ".DS_Store"]
-            else:     
-                station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("/")[-1] != ".DS_Store"]
-
-            station_list = sorted(set(station_list))
-            # print(f"Station list:\n{station_list}")
-        except Exception as exp:
-            log.write(f"{exp}\n")
-            return
-
-        log.write(f"[{datetime.now()}] GPU ID: {args['gpu_id']}; Batch size: {args['batch_size']}\n")
-        log.write(f"[{datetime.now()}] {len(station_list)} station(s) in {args['input_dir']}\n")
+        out_dir = os.path.join(os.getcwd(), str(args['output_dir']))    
         
-        if stations2use:
-            station_list = [x for x in station_list if x in stations2use]
-            log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
-       
-        tasks_predictor = [[f"({i+1}/{len(station_list)})", station_list[i], out_dir, args] for i in range(len(station_list))]
+        if mode == "network":   
+            try:
+                if platform.system() == 'Windows':
+                    station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("\\")[-1] != ".DS_Store"]
+                else:     
+                    station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("/")[-1] != ".DS_Store"]
+
+                station_list = sorted(set(station_list))
+                # print(f"Station list:\n{station_list}")
+            except Exception as exp:
+                log.write(f"{exp}\n")
+                return
+            log.write(f"[{datetime.now()}] GPU ID: {args['gpu_id']}; Batch size: {args['batch_size']}\n")
+            log.write(f"[{datetime.now()}] {len(station_list)} station(s) in {args['input_dir']}\n")
+            
+            if stations2use:
+                station_list = [x for x in station_list if x in stations2use]
+                log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
+        
+            # print(f"station_list: {station_list}")
+            tasks_predictor = [[f"({i+1}/{len(station_list)})", station_list[i], out_dir, args] for i in range(len(station_list))]
+            # print(f"tasks_predictor:\n{tasks_predictor}")
+
+        if mode == "single_station":
+            station_name = os.path.basename(args['input_dir']) 
+            tasks_predictor = [[f"(1/1)", station_name, out_dir, args]]
+        
         if not tasks_predictor:
             return
 
@@ -652,7 +661,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
                 while True:
                     # Add new task to queue while max is not reached
                     if len(tasks_queue) < max_pending_tasks:
-                        tasks_queue.append(parallel_predict.remote(tasks_predictor[i]))
+                        tasks_queue.append(parallel_predict.remote(tasks_predictor[i], mode))
                         break
                     # If there are more tasks than maximum, just process them
                     else:
@@ -678,7 +687,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
 
 
 @ray.remote
-def parallel_predict(predict_args):
+def parallel_predict(predict_args, mode):
     pos, station, out_dir, args = predict_args
     model = load_eqcct_model(args["p_model"], args["s_model"])
     save_dir = os.path.join(out_dir, str(station)+'_outputs')
@@ -707,8 +716,10 @@ def parallel_predict(predict_args):
     csvPr_gen.flush()
     
     start_Predicting = time.time()
-    files_list = glob.glob(f"{args['input_dir']}/{station}/*mseed")
-    #print(f"file_list: {files_list}")
+    if mode == 'network': 
+        files_list = glob.glob(f"{args['input_dir']}/{station}/*mseed")
+    if mode == 'single_station': 
+        files_list = glob.glob(f"{args['input_dir']}/*mseed")
     
     try:
         meta, data_set, hp, lp = _mseed2nparray(args, files_list, station)
