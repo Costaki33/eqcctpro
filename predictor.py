@@ -1,10 +1,12 @@
 import os
+import sys
 import ray
 import csv
 import time
 import glob
 import obspy
 import shutil
+import random
 import logging
 import platform
 import numpy as np
@@ -20,6 +22,7 @@ os.environ['KERAS_BACKEND'] = 'tensorflow'
 import tensorflow as tf
 import pynvml 
 import warnings
+import multiprocessing
 warnings.filterwarnings("ignore")
 from silence_tensorflow import silence_tensorflow
 silence_tensorflow()
@@ -498,6 +501,235 @@ def get_valid_gpu_choice(available_gpus):
         except ValueError:
             print("Invalid input. Please enter numeric GPU IDs separated by commas.")
             
+            
+            
+            
+def prepare_csv(csv_file_path, gpu:bool=False):
+    """
+    Loads or initializes the CSV file for storing test results.
+    """
+    if os.path.exists(csv_file_path):
+        print(f"Loading existing CSV file from '{csv_file_path}'...")
+        return pd.read_csv(csv_file_path)
+
+    print(f"CSV file not found. Creating a new CSV file at '{csv_file_path}'...")
+    columns = [
+        "Trial Number", "Stations Used", "Number of Stations Used",
+        "Number of CPUs Allocated for Ray to Use", "Number of Stations Running Predictions Concurrently",
+        "Intra-parallelism Threads", "Inter-parallelism Threads", "Total Run time for Picker (s)",
+        "Trial Success", "Error Message"
+    ]
+    df = pd.DataFrame(columns=columns)
+    df.to_csv(csv_file_path, index=False)
+
+def update_csv(csv_filepath, trial_number, intra, inter, success, error_message, output_dir):
+    df = pd.read_csv(csv_filepath)
+    df.at[trial_number -1, "Trial Number"] = trial_number
+    df.at[trial_number -1, "Intra-parallelism Threads"] = intra
+    df.at[trial_number -1, "Inter-parallelism Threads"] = inter
+    df.at[trial_number -1, "Trial Success"] = success
+    df.at[trial_number -1, "Error Message"] = error_message
+    df.to_csv(csv_filepath, index=False)
+    remove_directory(output_dir)
+
+
+def generate_station_list(num_stations_to_use):
+    if num_stations_to_use <= 10:
+        return list(range(1, num_stations_to_use + 1))
+    
+    # Numbers 1-10
+    station_list = list(range(1, 11))
+    
+    # Multiples of 5 up to num_stations_to_use
+    multiples_of_5 = list(range(15, num_stations_to_use + 1, 5))
+    
+    # Any additional numbers between 21 and num_stations_to_use
+    additional_numbers = list(range(21, num_stations_to_use + 1))
+    
+    # Combine lists while ensuring uniqueness
+    return sorted(set(station_list + multiples_of_5 + additional_numbers))
+
+
+def remove_directory(path):
+    """
+    Removes the specified directory if it exists.
+    """
+    if os.path.exists(path):
+        shutil.rmtree(path)
+        print(f"Removed directory: {path}")
+    else:
+        print(f"Directory '{path}' does not exist anymore.")
+        
+        
+def run_prediction(input_dir, output_dir, log_filepath, P_threshold, S_threshold, 
+                   p_model_filepath, s_model_filepath, num_concurrent_predictions, 
+                   ray_cpus, mode, use_gpu, stations2use, cpus_to_use,csv_filepath, intra_threads, inter_threads):
+    """Function to run tf_environ and mseed_predictor as a separate process"""
+    
+    # Set CPU affinity for the child process
+    pid = os.getpid()
+    os.sched_setaffinity(pid, cpus_to_use)
+
+    # Initialize TensorFlow environment
+    tf_environ(gpu_id=-1, intra_threads=intra_threads, inter_threads=inter_threads)
+
+    # Run prediction
+    mseed_predictor(
+        input_dir=input_dir, 
+        output_dir=output_dir, 
+        log_file=log_filepath, 
+        P_threshold=P_threshold, 
+        S_threshold=S_threshold, 
+        p_model=p_model_filepath, 
+        s_model=s_model_filepath, 
+        number_of_concurrent_predictions=num_concurrent_predictions, 
+        ray_cpus=ray_cpus,
+        mode='network',
+        use_gpu=use_gpu,
+        stations2use=stations2use,
+        testing=True,
+        test_csv_filepath=csv_filepath
+    )
+ 
+ 
+def find_optimal_configurations_cpu(df):
+    """
+    Find:
+    1. The best number of concurrent predictions for each (stations, CPUs) pair that results in the fastest runtime.
+    2. The overall best configuration balancing stations, CPUs, and runtime.
+    """
+
+    # Convert relevant columns to numeric, handling NaNs gracefully
+    df["Number of Stations Used"] = pd.to_numeric(df["Number of Stations Used"], errors="coerce")
+    df["Number of CPUs Allocated for Ray to Use"] = pd.to_numeric(df["Number of CPUs Allocated for Ray to Use"], errors="coerce")
+    df["Number of Stations Running Predictions Concurrently"] = pd.to_numeric(df["Number of Stations Running Predictions Concurrently"], errors="coerce")
+    df["Total Run time for Picker (s)"] = pd.to_numeric(df["Total Run time for Picker (s)"], errors="coerce")
+
+    # Drop rows with missing values in these essential columns
+    df_cleaned = df.dropna(subset=["Number of Stations Used", "Number of CPUs Allocated for Ray to Use", 
+                                "Number of Stations Running Predictions Concurrently", "Total Run time for Picker (s)"])
+
+    # Find the best concurrent prediction configuration for each combination of (Stations, CPUs)
+    optimal_concurrent_preds = df_cleaned.loc[
+        df_cleaned.groupby(["Number of Stations Used", "Number of CPUs Allocated for Ray to Use"])
+        ["Total Run time for Picker (s)"].idxmin()
+    ]
+
+    # Define what "moderate" means in terms of CPU usage (e.g., middle 50% of available CPUs)
+    cpu_min = df_cleaned["Number of CPUs Allocated for Ray to Use"].quantile(0.25)
+    cpu_max = df_cleaned["Number of CPUs Allocated for Ray to Use"].quantile(0.75)
+
+    # Filter for rows within the moderate CPU range
+    df_moderate_cpus = df_cleaned[(df_cleaned["Number of CPUs Allocated for Ray to Use"] >= cpu_min) & 
+                                (df_cleaned["Number of CPUs Allocated for Ray to Use"] <= cpu_max)]
+
+    # Sort by the highest number of stations first, then by the fastest runtime
+    best_overall_config = df_moderate_cpus.sort_values(
+        by=["Number of Stations Used", "Total Run time for Picker (s)"], 
+        ascending=[False, True]  # Maximize stations, minimize runtime
+    ).iloc[0]
+
+
+    return optimal_concurrent_preds, best_overall_config
+
+   
+
+def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_dir:str, output_dir:str, log_filepath, csv_dir, P_threshold, S_threshold, p_model_filepath, s_model_filepath, stations2use:int=None): 
+    """
+    evaluate_system will evaluate a given system's hardware to find the optimal amount of CPUs/GPUs and concurrent predictions to use 
+    """
+    # Set options to display all rows and columns
+    pd.set_option('display.max_rows', None)
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 0)
+    pd.set_option('display.max_colwidth', None)
+    valid_modes = {"cpu", "gpu"}
+    if eval_mode not in valid_modes:
+        raise ValueError(f"Invalid mode '{mode}'. Choose either 'cpu' or 'gpu'.")
+    
+    csv_filepath = f"{csv_dir}/optimal_cpu_usage.csv" # Define csv filepath for test results 
+    remove_directory(output_dir) # Remove output dir before it begins for maximum cleaning
+
+    if stations2use is None: 
+        stations2use_list = list(range(1, 11)) + list(range(15, 101, 5))
+    else: 
+        stations2use_list = generate_station_list(stations2use)
+        
+    if eval_mode == "cpu": 
+        while True: 
+            choice = input("Would you like to test your entire system (up to all CPUs available)? (y/n): ").strip().lower()
+            if choice in {"y", "n"}:
+                break
+            print("Invalid input. Please enter 'y' or 'n'.")
+        
+        if choice == "y": 
+            cpu_count = os.cpu_count()
+            cpu_list = list(range(cpu_count))
+            print(f"[{datetime.now()}] Testing using up to all {cpu_count} available CPUs...")
+                        
+            prepare_csv(csv_filepath, False)
+            trial_num = 1
+            for i in range(1, cpu_count):
+                cpus_to_use = cpu_list[:i]
+                for j in stations2use:
+                    # Define num of concurrent predictions per iteration
+                    concurrent_predictions_list = generate_station_list(j) 
+                    for k in concurrent_predictions_list: 
+                        # Start a new process with CPU affinity
+                        process = multiprocessing.Process(
+                            target=run_prediction,
+                            args=(input_dir, output_dir, log_filepath, P_threshold, 
+                                  S_threshold, p_model_filepath, s_model_filepath, 
+                                  k, i, eval_mode, False, j, cpus_to_use, csv_filepath, intra_threads, inter_threads)
+                        )
+                        process.start()
+                        process.join()  # Wait for process to complete before continuing
+                        
+                        if process.exitcode == 0: 
+                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir)
+                        else: 
+                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir)
+                        trial_num += 1
+        if choice == "n": 
+            cpu_count = int(input("How many CPUs would you like to use? (must be int): "))
+            cpu_list = list(range(cpu_count))
+            print(f"[{datetime.now()}] Testing using up to all {cpu_count} available CPUs...")
+                        
+            prepare_csv(csv_filepath, False)
+            trial_num = 1
+            for i in range(1, cpu_count+1):
+                cpus_to_use = cpu_list[:i]
+                for j in stations2use_list:
+                    # Define num of concurrent predictions per iteration
+                    concurrent_predictions_list = generate_station_list(j) 
+                    for k in concurrent_predictions_list: 
+                        # Start a new process with CPU affinity
+                        process = multiprocessing.Process(
+                            target=run_prediction,
+                            args=(input_dir, output_dir, log_filepath, P_threshold, 
+                                  S_threshold, p_model_filepath, s_model_filepath, 
+                                  k, i, eval_mode, False, j, cpus_to_use, csv_filepath, intra_threads, inter_threads)
+                        )
+                        process.start()
+                        process.join()  # Wait for process to complete before continuing
+                        
+                        if process.exitcode == 0: 
+                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir)
+                        else: 
+                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir)
+                        trial_num += 1
+            
+        # print(f"[{datetime.now()}] Testing complete.\n[{datetime.now()}] Finding Optimal Configurations...")
+        # # Compute optimal configurations (CPU)
+        # df = pd.read_csv(csv_filepath)
+        # optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_cpu(df)
+        # optimal_configuration_df.to_csv(f"{csv_dir}/optimal_configurations.csv")
+        # best_overall_usecase_df.to_csv(f"{csv_dir}/best_overall_usecase.csv")
+        # print(f"[{datetime.now()}] Optimal Configurations Found. Findings saved to:\n" 
+        #         f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {csv_dir}/optimal_configurations.csv\n" 
+        #         f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase.csv")
+    
+            
 def run_EQCCT_mseed(
         use_gpu: bool, 
         ray_cpus: int, 
@@ -559,9 +791,7 @@ def run_EQCCT_mseed(
             print(f"Total VRAM: {total_vram:.2f} GB")
             print(f"Available VRAM: {available_vram:.2f} GB")
             # 95% of the Node's memory can be used by Ray and it's Raylets. 
-            # Beyond the threshold, Ray will begin to kill process to save the node's memory 
-            # If the free 
-            
+            # Beyond the threshold, Ray will begin to kill process to save the node's memory             
             if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
                 free_vram = total_vram * 0.9485        
             
@@ -615,7 +845,9 @@ def mseed_predictor(input_dir='downloads_mseeds',
               ray_cpus=None,
               mode="network",
               use_gpu=False,
-              gpu_memory_limit_mb=None): 
+              gpu_memory_limit_mb=None,
+              testing=None,
+              test_csv_filepath=None): 
     
     """ 
     
@@ -717,8 +949,8 @@ def mseed_predictor(input_dir='downloads_mseeds',
             log.write(f"[{datetime.now()}] GPU ID: {args['gpu_id']}; Batch size: {args['batch_size']}\n")
             log.write(f"[{datetime.now()}] {len(station_list)} station(s) in {args['input_dir']}\n")
             
-            if stations2use:
-                station_list = [x for x in station_list if x in stations2use]
+            if stations2use and stations2use <= len(station_list):
+                station_list = random.sample(station_list, stations2use)
                 log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
         
             # print(f"station_list: {station_list}")
@@ -773,6 +1005,36 @@ def mseed_predictor(input_dir='downloads_mseeds',
         end_time = time.time()
         print(f"[{datetime.now()}] EQCCT Pick Detection Process Complete! Picks are saved at {output_dir}\n[{datetime.now()}] Process Runtime: {end_time - start_time:.2f} s")
 
+        
+        if testing is True: 
+            trial_data = {
+                "Trial Number": None,
+                "Stations Used": f"{station_list}",
+                "Number of Stations Used": f"{len(station_list)}",
+                "Number of CPUs Allocated for Ray to Use": f"{ray_cpus}",
+                "Number of Stations Running Predictions Concurrently": f"{number_of_concurrent_predictions}",  
+                "Intra-parallelism Threads": None, 
+                "Inter-parallelism Threads": None, 
+                "Total Run time for Picker (s)": f"{end_time - start_time:.6f}",
+                "Trial Success": None, 
+                "Error Message": None  
+            }
+            
+            
+            df_trial = pd.DataFrame([trial_data])
+            
+            # Check if the CSV file already exists
+            if os.path.exists(test_csv_filepath):
+                sys.stdout.flush() 
+                # Load the existing CSV into a DataFrame
+                df_existing = pd.read_csv(test_csv_filepath)
+                # Append the trial data to the existing DataFrame
+                df_existing = pd.concat([df_existing, df_trial], ignore_index=True)
+            else:
+                sys.stdout.flush()
+            # Append the trial data directly to the CSV file
+            df_trial.to_csv(test_csv_filepath, mode='a', index=False, header=not os.path.exists(test_csv_filepath))
+            print(f"\nSuccessfully saved trial data to CSV at {test_csv_filepath}")
 
 @ray.remote
 def parallel_predict(predict_args, mode, gpu=False, gpu_memory_limit_mb=None):
