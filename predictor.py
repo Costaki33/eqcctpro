@@ -632,7 +632,54 @@ def find_optimal_configurations_cpu(df):
 
     return optimal_concurrent_preds, best_overall_config
 
-   
+
+def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: bool, eval_sys_results_dir:str): 
+    if best_overall_usecase is True: 
+        df_best_overall = pd.read_csv(f"{eval_sys_results_dir}/best_overall_usecase.csv")
+        # Convert into a dictionary for easy access
+        best_config_dict = df_best_overall.set_index(df_best_overall.columns[0]).to_dict()[df_best_overall.columns[1]]
+
+        # Extract required values
+        num_cpus = best_config_dict.get("Number of CPUs Allocated for Ray to Use")
+        num_concurrent_predictions = best_config_dict.get("Number of Stations Running Predictions Concurrently")
+        intra_threads = best_config_dict.get("Intra-parallelism Threads")
+        inter_threads = best_config_dict.get("Inter-parallelism Threads")
+        num_stations = best_config_dict.get("Number of Stations Used")
+        total_runtime = best_config_dict.get("Total Run time for Picker (s)")
+        
+        print(f"CPU: {num_cpus}\n"
+        f"Concurrent Predictions: {num_concurrent_predictions}\n"
+        f"Intra-parallelism Threads: {intra_threads}\n"
+        f"Inter-parallelism Threads: {inter_threads}\n"
+        f"Stations: {num_stations}\n"
+        f"Total Runtime (s): {total_runtime}")
+
+        # Return the extracted values
+        return num_cpus, num_concurrent_predictions, intra_threads, inter_threads, num_stations
+        df_optimal = pd.read_csv(f"{eval_sys_results_dir}/optimal_configurations.csv")
+
+        # Convert relevant columns to numeric, handling NaNs gracefully
+        df_optimal["Number of Stations Used"] = pd.to_numeric(df_optimal["Number of Stations Used"], errors="coerce")
+        df_optimal["Number of CPUs Allocated for Ray to Use"] = pd.to_numeric(df_optimal["Number of CPUs Allocated for Ray to Use"], errors="coerce")
+        df_optimal["Number of Stations Running Predictions Concurrently"] = pd.to_numeric(df_optimal["Number of Stations Running Predictions Concurrently"], errors="coerce")
+        df_optimal["Total Run time for Picker (s)"] = pd.to_numeric(df_optimal["Total Run time for Picker (s)"], errors="coerce")
+        filtered_df = df_optimal[
+        (df_optimal["Number of CPUs Allocated for Ray to Use"] == cpu) &
+        (df_optimal["Number of Stations Used"] == station_count)]
+        if filtered_df.empty:
+            print("No matching configuration found. Please enter a valid entry.")
+            exit() 
+
+        # Find the best configuration (fastest runtime)
+        best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
+        print(f"CPU: {cpu}\nConcurrent Predictions: {best_config['Number of Stations Running Predictions Concurrently']}\n"
+            f"Intra-parallelism Threads: {best_config['Intra-parallelism Threads']}\n"
+            f"Inter-parallelism Threads: {best_config['Inter-parallelism Threads']}\n"
+            f"Stations: {station_count}\nTotal Runtime (s): {best_config['Total Run time for Picker (s)']}")
+
+        return cpu, best_config["Number of Stations Running Predictions Concurrently"], best_config["Intra-parallelism Threads"], best_config["Inter-parallelism Threads"], station_count
+
+
 
 def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_dir:str, output_dir:str, log_filepath, csv_dir, P_threshold, S_threshold, p_model_filepath, s_model_filepath, stations2use:int=None): 
     """
@@ -719,15 +766,15 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
                             update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir)
                         trial_num += 1
             
-        # print(f"[{datetime.now()}] Testing complete.\n[{datetime.now()}] Finding Optimal Configurations...")
-        # # Compute optimal configurations (CPU)
-        # df = pd.read_csv(csv_filepath)
-        # optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_cpu(df)
-        # optimal_configuration_df.to_csv(f"{csv_dir}/optimal_configurations.csv")
-        # best_overall_usecase_df.to_csv(f"{csv_dir}/best_overall_usecase.csv")
-        # print(f"[{datetime.now()}] Optimal Configurations Found. Findings saved to:\n" 
-        #         f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {csv_dir}/optimal_configurations.csv\n" 
-        #         f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase.csv")
+        print(f"[{datetime.now()}] Testing complete.\n[{datetime.now()}] Finding Optimal Configurations...")
+        # Compute optimal configurations (CPU)
+        df = pd.read_csv(csv_filepath)
+        optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_cpu(df)
+        optimal_configuration_df.to_csv(f"{csv_dir}/optimal_configurations.csv")
+        best_overall_usecase_df.to_csv(f"{csv_dir}/best_overall_usecase.csv")
+        print(f"[{datetime.now()}] Optimal Configurations Found. Findings saved to:\n" 
+                f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {csv_dir}/optimal_configurations.csv\n" 
+                f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase.csv")
     
             
 def run_EQCCT_mseed(
@@ -743,8 +790,8 @@ def run_EQCCT_mseed(
         intra_threads: int = 1, 
         inter_threads: int = 1, 
         P_threshold: float = 0.001, 
-        S_threshold: float = 0.02
-):
+        S_threshold: float = 0.02,
+        specific_stations: str = None):
     """
     run_EQCCT_mseed enables users to use EQCCT to generate picks on MSEED files
     """
@@ -760,6 +807,13 @@ def run_EQCCT_mseed(
     
     # CPU Usage
     if use_gpu is False: 
+        # while True: 
+        #     choice = input("Do you want to use ? (y/n): ").strip().lower()
+        #     if choice in {"y", "n"}:
+        #         break
+        #     print("Invalid input. Please enter 'y' or 'n'.")
+        
+        # if choice == "y": 
         tf_environ(gpu_id=-1, intra_threads=intra_threads, inter_threads=inter_threads)
         mseed_predictor(input_dir=input_dir, 
                 output_dir=output_dir, 
@@ -771,7 +825,8 @@ def run_EQCCT_mseed(
                 number_of_concurrent_predictions=number_of_concurrent_predictions, 
                 ray_cpus=ray_cpus,
                 mode=mode,
-                use_gpu=False)
+                use_gpu=False,
+                specific_stations=specific_stations)
         
     # GPU Usage   
     if use_gpu is True: 
@@ -847,7 +902,8 @@ def mseed_predictor(input_dir='downloads_mseeds',
               use_gpu=False,
               gpu_memory_limit_mb=None,
               testing=None,
-              test_csv_filepath=None): 
+              test_csv_filepath=None,
+              specific_stations=None): 
     
     """ 
     
@@ -951,6 +1007,9 @@ def mseed_predictor(input_dir='downloads_mseeds',
             
             if stations2use and stations2use <= len(station_list):
                 station_list = random.sample(station_list, stations2use)
+                log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
+            if specific_stations is not None: 
+                station_list = [x for x in station_list if x in specific_stations]
                 log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
         
             # print(f"station_list: {station_list}")
