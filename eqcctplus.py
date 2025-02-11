@@ -22,7 +22,8 @@ run_EQCCT_mseed(use_gpu=False,
                 p_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_024.h5', 
                 s_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_021.h5', 
                 number_of_concurrent_predictions=5,
-                specific_stations = 'ALPN, VHRN, PB35')
+                specific_stations = 'ALPN, VHRN, PB35',
+                csv_dir = '/home/skevofilaxc/eqcctplus/csv')
 
 # evaluate_system('cpu',
 #                 stations2use=5,

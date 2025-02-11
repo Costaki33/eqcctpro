@@ -655,7 +655,7 @@ def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: boo
         f"Total Runtime (s): {total_runtime}")
 
         # Return the extracted values
-        return num_cpus, num_concurrent_predictions, intra_threads, inter_threads, num_stations
+        return int(float(num_cpus)), int(float(num_concurrent_predictions)), int(float(intra_threads)), int(float(inter_threads)), int(float(num_stations))
         df_optimal = pd.read_csv(f"{eval_sys_results_dir}/optimal_configurations.csv")
 
         # Convert relevant columns to numeric, handling NaNs gracefully
@@ -677,7 +677,7 @@ def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: boo
             f"Inter-parallelism Threads: {best_config['Inter-parallelism Threads']}\n"
             f"Stations: {station_count}\nTotal Runtime (s): {best_config['Total Run time for Picker (s)']}")
 
-        return cpu, best_config["Number of Stations Running Predictions Concurrently"], best_config["Intra-parallelism Threads"], best_config["Inter-parallelism Threads"], station_count
+        return int(float(cpu)), int(float(best_config["Number of Stations Running Predictions Concurrently"])), int(float(best_config["Intra-parallelism Threads"])), int(float(best_config["Inter-parallelism Threads"])), int(float(station_count))
 
 
 
@@ -791,7 +791,8 @@ def run_EQCCT_mseed(
         inter_threads: int = 1, 
         P_threshold: float = 0.001, 
         S_threshold: float = 0.02,
-        specific_stations: str = None):
+        specific_stations: str = None,
+        csv_dir:str = None):
     """
     run_EQCCT_mseed enables users to use EQCCT to generate picks on MSEED files
     """
@@ -807,26 +808,42 @@ def run_EQCCT_mseed(
     
     # CPU Usage
     if use_gpu is False: 
-        # while True: 
-        #     choice = input("Do you want to use ? (y/n): ").strip().lower()
-        #     if choice in {"y", "n"}:
-        #         break
-        #     print("Invalid input. Please enter 'y' or 'n'.")
+        while True: 
+            choice = input("Do you want to use best overall usecase configuration instead? (y/n): ").strip().lower()
+            if choice in {"y", "n"}:
+                break
+            print("Invalid input. Please enter 'y' or 'n'.")
         
-        # if choice == "y": 
-        tf_environ(gpu_id=-1, intra_threads=intra_threads, inter_threads=inter_threads)
-        mseed_predictor(input_dir=input_dir, 
-                output_dir=output_dir, 
-                log_file=log_filepath, 
-                P_threshold=P_threshold, 
-                S_threshold=S_threshold, 
-                p_model=p_model_filepath, 
-                s_model=s_model_filepath, 
-                number_of_concurrent_predictions=number_of_concurrent_predictions, 
-                ray_cpus=ray_cpus,
-                mode=mode,
-                use_gpu=False,
-                specific_stations=specific_stations)
+        if choice == "y":
+            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(1, 1, True, f'{csv_dir}')
+            print(f"[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads")
+            tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
+            mseed_predictor(input_dir=input_dir, 
+                    output_dir=output_dir, 
+                    log_file=log_filepath, 
+                    P_threshold=P_threshold, 
+                    S_threshold=S_threshold, 
+                    p_model=p_model_filepath, 
+                    s_model=s_model_filepath, 
+                    number_of_concurrent_predictions=num_concurrent_predictions, 
+                    ray_cpus=cpus_to_use,
+                    mode=mode,
+                    use_gpu=False,
+                    specific_stations=specific_stations)    
+        else: 
+            tf_environ(gpu_id=-1, intra_threads=intra_threads, inter_threads=inter_threads)
+            mseed_predictor(input_dir=input_dir, 
+                    output_dir=output_dir, 
+                    log_file=log_filepath, 
+                    P_threshold=P_threshold, 
+                    S_threshold=S_threshold, 
+                    p_model=p_model_filepath, 
+                    s_model=s_model_filepath, 
+                    number_of_concurrent_predictions=number_of_concurrent_predictions, 
+                    ray_cpus=ray_cpus,
+                    mode=mode,
+                    use_gpu=False,
+                    specific_stations=specific_stations)
         
     # GPU Usage   
     if use_gpu is True: 
@@ -834,23 +851,23 @@ def run_EQCCT_mseed(
             choice = input("Would you like to set how much VRAM the GPU can use? (y/n): ").strip().lower()
             if choice in {"y", "n"}:
                 break
-            print("Invalid input. Please enter 'y' or 'n'.")
+            print(f"Invalid input. Please enter 'y' or 'n'.")
         
         if choice == "y": 
             free_vram_mb = get_vram()
-            print(f"VRAM set to {vram} MB.")
+            print(f"[{datetime.now()}] VRAM set to {vram} MB.")
         else:
             # Setting VRAM
-            print(f"Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
+            print(f"[{datetime.now()}] Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
             total_vram, available_vram = get_gpu_vram()
-            print(f"Total VRAM: {total_vram:.2f} GB")
-            print(f"Available VRAM: {available_vram:.2f} GB")
+            print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB")
+            print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB")
             # 95% of the Node's memory can be used by Ray and it's Raylets. 
             # Beyond the threshold, Ray will begin to kill process to save the node's memory             
             if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
                 free_vram = total_vram * 0.9485        
             
-            print(f"Using {round(free_vram, 2)} GB VRAM (within 94.85% VRAM threshold)")
+            print(f"[{datetime.now()}] Using {round(free_vram, 2)} GB VRAM (within 94.85% VRAM threshold)")
             free_vram_mb = free_vram * 1024 # Convert to MB 
             
             # Setting GPUs to use 
