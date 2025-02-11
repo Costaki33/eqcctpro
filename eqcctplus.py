@@ -9,21 +9,20 @@ output_pick_directory_path = '/home/skevofilaxc/eqcctplus/outputs'
 log_file_path = '/home/skevofilaxc/eqcctplus/outputs/eqcctplus.log'
 csv_filepath = '/home/skevofilaxc/eqcctplus/csv'
 
-run_EQCCT_mseed(use_gpu=False, 
-                intra_threads=1, 
-                inter_threads=1, 
-                ray_cpus=5,
-                mode='network', 
-                input_dir=input_mseed_directory_path, 
-                output_dir=output_pick_directory_path, 
-                log_filepath=log_file_path, 
-                P_threshold=0.001, 
-                S_threshold=0.02, 
-                p_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_024.h5', 
-                s_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_021.h5', 
-                number_of_concurrent_predictions=5,
-                specific_stations = 'ALPN, VHRN, PB35',
-                csv_dir = '/home/skevofilaxc/eqcctplus/csv')
+# run_EQCCT_mseed(use_gpu=False, 
+#                 intra_threads=1, 
+#                 inter_threads=1, 
+#                 ray_cpus=5,
+#                 mode='network', 
+#                 input_dir=input_mseed_directory_path, 
+#                 output_dir=output_pick_directory_path, 
+#                 log_filepath=log_file_path, 
+#                 P_threshold=0.001, 
+#                 S_threshold=0.02, 
+#                 p_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_024.h5', 
+#                 s_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_021.h5', 
+#                 number_of_concurrent_predictions=5,
+#                 specific_stations = 'ALPN, VHRN, PB35')
 
 # evaluate_system('cpu',
 #                 stations2use=5,
@@ -38,4 +37,4 @@ run_EQCCT_mseed(use_gpu=False,
 #                 p_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_024.h5', 
 #                 s_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_021.h5',)
 
-# cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(4, 3, True, '/home/skevofilaxc/eqcctplus/csv/')
+cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(4, 3, False, '/home/skevofilaxc/eqcctplus/csv/')

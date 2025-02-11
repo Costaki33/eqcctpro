@@ -634,8 +634,22 @@ def find_optimal_configurations_cpu(df):
 
 
 def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: bool, eval_sys_results_dir:str): 
+    # Check if eval_sys_results_dir is valid
+    if not eval_sys_results_dir or not os.path.isdir(eval_sys_results_dir):
+        print(f"Error: The provided directory path '{eval_sys_results_dir}' is invalid or does not exist.")
+        print("Please provide a valid directory path for the input parameter 'csv_dir'.")
+        return exit()  # Exit early if the directory is invalid
+    
     if best_overall_usecase is True: 
-        df_best_overall = pd.read_csv(f"{eval_sys_results_dir}/best_overall_usecase.csv")
+        file_path = f"{eval_sys_results_dir}/best_overall_usecase.csv"
+
+        # Check if the CSV file exists before reading
+        if not os.path.exists(file_path):
+            print(f"Error: The file '{file_path}' does not exist. Ensure the file is in the correct directory.")
+            return exit()
+
+        # Load the CSV
+        df_best_overall = pd.read_csv(file_path)
         # Convert into a dictionary for easy access
         best_config_dict = df_best_overall.set_index(df_best_overall.columns[0]).to_dict()[df_best_overall.columns[1]]
 
@@ -656,7 +670,16 @@ def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: boo
 
         # Return the extracted values
         return int(float(num_cpus)), int(float(num_concurrent_predictions)), int(float(intra_threads)), int(float(inter_threads)), int(float(num_stations))
-        df_optimal = pd.read_csv(f"{eval_sys_results_dir}/optimal_configurations.csv")
+    
+    else: # Optimal Configuration for User-Specified CPUs and Number of Stations to use
+        file_path = f"{eval_sys_results_dir}/optimal_configurations.csv"
+
+        # Check if the CSV file exists before reading
+        if not os.path.exists(file_path):
+            print(f"Error: The file '{file_path}' does not exist. Ensure the file is in the correct directory.")
+            return exit() 
+        
+        df_optimal = pd.read_csv(file_path)
 
         # Convert relevant columns to numeric, handling NaNs gracefully
         df_optimal["Number of Stations Used"] = pd.to_numeric(df_optimal["Number of Stations Used"], errors="coerce")
