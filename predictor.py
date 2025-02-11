@@ -366,14 +366,12 @@ def create_cct_modelS(inputs):
 
 
 def tf_environ(gpu_id, gpu_memory_limit_mb=None, gpus_to_use=None, intra_threads=None, inter_threads=None):
-    print(r"""       _                   
-                    | |                  
+    print(r"""                     _                   
   ___  __ _  ___ ___| |_ _ __  _ __ ___  
  / _ \/ _` |/ __/ __| __| '_ \| '__/ _ \ 
 |  __/ (_| | (_| (__| |_| |_) | | | (_) |
  \___|\__, |\___\___|\__| .__/|_|  \___/ 
-         | |            | |              
-         |_|            |_|                         
+         |_|            |_|                                
     """)
     print(f"\n-----------------------------\nTensorflow and Ray Configuration...\n")
     tf.debugging.set_log_device_placement(True)
@@ -907,7 +905,6 @@ def run_EQCCT_mseed(
         p_model_filepath: str, 
         s_model_filepath: str, 
         number_of_concurrent_predictions: int, 
-        mode:str,  
         intra_threads: int = 1, 
         inter_threads: int = 1, 
         P_threshold: float = 0.001, 
@@ -917,16 +914,7 @@ def run_EQCCT_mseed(
     """
     run_EQCCT_mseed enables users to use EQCCT to generate picks on MSEED files
     """
-    
-    # 'Mode' parameter is the different input types that are appropriate for run_EQCCT_mseed to handle 
-    # 'single station' mode for where the user only inputs 1 directory that has in its contents the 3 MSEED files 
-    # or 
-    # 'network' mode for where the user provides a parent directory that is made up of sub-dirs of stations which are comprised of MSEED files 
-    valid_modes = {"single_station", "network"}
-    if mode not in valid_modes:
-        raise ValueError(f"Invalid mode '{mode}'. Choose either 'single_station' or 'network'.")
-
-    
+       
     # CPU Usage
     if use_gpu is False: 
         while True: 
@@ -948,7 +936,6 @@ def run_EQCCT_mseed(
                     s_model=s_model_filepath, 
                     number_of_concurrent_predictions=num_concurrent_predictions, 
                     ray_cpus=cpus_to_use,
-                    mode=mode,
                     use_gpu=False,
                     specific_stations=specific_stations)    
         else: 
@@ -962,7 +949,6 @@ def run_EQCCT_mseed(
                     s_model=s_model_filepath, 
                     number_of_concurrent_predictions=number_of_concurrent_predictions, 
                     ray_cpus=ray_cpus,
-                    mode=mode,
                     use_gpu=False,
                     specific_stations=specific_stations)
         
@@ -1009,7 +995,6 @@ def run_EQCCT_mseed(
                 s_model=s_model_filepath, 
                 number_of_concurrent_predictions=number_of_concurrent_predictions, 
                 ray_cpus=ray_cpus,
-                mode=mode,
                 use_gpu=True,
                 gpu_id=selected_gpus, 
                 gpu_memory_limit_mb=vram_per_task_mb)
@@ -1036,7 +1021,6 @@ def mseed_predictor(input_dir='downloads_mseeds',
               s_model=None,
               number_of_concurrent_predictions=None,
               ray_cpus=None,
-              mode="network",
               use_gpu=False,
               gpu_memory_limit_mb=None,
               testing=None,
@@ -1127,36 +1111,31 @@ def mseed_predictor(input_dir='downloads_mseeds',
         
     with open(log_file, mode="w", buffering=1) as log:
         out_dir = os.path.join(os.getcwd(), str(args['output_dir']))    
-        
-        if mode == "network":   
-            try:
-                if platform.system() == 'Windows':
-                    station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("\\")[-1] != ".DS_Store"]
-                else:     
-                    station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("/")[-1] != ".DS_Store"]
+           
+        try:
+            if platform.system() == 'Windows':
+                station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("\\")[-1] != ".DS_Store"]
+            else:     
+                station_list = [ev.split(".")[0] for ev in listdir(args['input_dir']) if ev.split("/")[-1] != ".DS_Store"]
 
-                station_list = sorted(set(station_list))
-                # print(f"Station list:\n{station_list}")
-            except Exception as exp:
-                log.write(f"{exp}\n")
-                return
-            log.write(f"[{datetime.now()}] GPU ID: {args['gpu_id']}; Batch size: {args['batch_size']}\n")
-            log.write(f"[{datetime.now()}] {len(station_list)} station(s) in {args['input_dir']}\n")
-            
-            if stations2use and stations2use <= len(station_list):
-                station_list = random.sample(station_list, stations2use)
-                log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
-            if specific_stations is not None: 
-                station_list = [x for x in station_list if x in specific_stations]
-                log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
+            station_list = sorted(set(station_list))
+        except Exception as exp:
+            log.write(f"{exp}\n")
+            return
+        log.write(f"[{datetime.now()}] GPU ID: {args['gpu_id']}; Batch size: {args['batch_size']}\n")
+        log.write(f"[{datetime.now()}] {len(station_list)} station(s) in {args['input_dir']}\n")
         
-            # print(f"station_list: {station_list}")
-            tasks_predictor = [[f"({i+1}/{len(station_list)})", station_list[i], out_dir, args] for i in range(len(station_list))]
-            # print(f"tasks_predictor:\n{tasks_predictor}")
+        if stations2use and stations2use <= len(station_list):
+            station_list = random.sample(station_list, stations2use)
+            log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
+        if specific_stations is not None: 
+            station_list = [x for x in station_list if x in specific_stations]
+            log.write(f"[{datetime.now()}] Using {len(station_list)} station(s) after selection.\n")
+    
+        # print(f"station_list: {station_list}")
+        tasks_predictor = [[f"({i+1}/{len(station_list)})", station_list[i], out_dir, args] for i in range(len(station_list))]
+        # print(f"tasks_predictor:\n{tasks_predictor}")
 
-        if mode == "single_station":
-            station_name = os.path.basename(args['input_dir']) 
-            tasks_predictor = [[f"(1/1)", station_name, out_dir, args]]
         
         if not tasks_predictor:
             return
@@ -1174,10 +1153,10 @@ def mseed_predictor(input_dir='downloads_mseeds',
                     # Add new task to queue while max is not reached
                     if len(tasks_queue) < max_pending_tasks:
                         if use_gpu is False: 
-                            tasks_queue.append(parallel_predict.remote(tasks_predictor[i], mode, False, None))
+                            tasks_queue.append(parallel_predict.remote(tasks_predictor[i], False, None))
                         elif use_gpu is True: 
                             gpu_allocation_per_task = len(gpu_id) / number_of_concurrent_predictions  # Ensure max_pending_tasks > 0 to avoid division by zero
-                            task = parallel_predict.options(num_gpus=gpu_allocation_per_task, num_cpus=0).remote(tasks_predictor[i], mode, True, gpu_memory_limit_mb)
+                            task = parallel_predict.options(num_gpus=gpu_allocation_per_task, num_cpus=0).remote(tasks_predictor[i], True, gpu_memory_limit_mb)
                             tasks_queue.append(task)
                         break
                     # If there are more tasks than maximum, just process them
@@ -1234,7 +1213,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
             print(f"\nSuccessfully saved trial data to CSV at {test_csv_filepath}")
 
 @ray.remote
-def parallel_predict(predict_args, mode, gpu=False, gpu_memory_limit_mb=None):
+def parallel_predict(predict_args, gpu=False, gpu_memory_limit_mb=None):
     
     if gpu is True: 
         # Ensure TensorFlow only sees its assigned VRAM
@@ -1278,10 +1257,10 @@ def parallel_predict(predict_args, mode, gpu=False, gpu_memory_limit_mb=None):
     csvPr_gen.flush()
     
     start_Predicting = time.time()
-    if mode == 'network': 
-        files_list = glob.glob(f"{args['input_dir']}/{station}/*mseed")
-    if mode == 'single_station': 
-        files_list = glob.glob(f"{args['input_dir']}/*mseed")
+    # if mode == 'network': 
+    files_list = glob.glob(f"{args['input_dir']}/{station}/*mseed")
+    # if mode == 'single_station': 
+    #     files_list = glob.glob(f"{args['input_dir']}/*mseed")
     
     try:
         meta, data_set, hp, lp = _mseed2nparray(args, files_list, station)
