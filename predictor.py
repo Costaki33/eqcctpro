@@ -680,50 +680,6 @@ def find_optimal_configurations_cpu(df):
     return optimal_concurrent_preds, best_overall_config
 
 
-def find_optimal_configurations_gpu(df):
-    """
-    Find:
-    1. The best number of concurrent predictions for each (stations, GPUs, VRAM, CPUs) pair that results in the fastest runtime.
-    2. The overall best configuration balancing stations, GPUs, CPUs, VRAM, and runtime.
-    """
-    # Convert relevant columns to numeric, handling NaNs gracefully
-    numeric_cols = [
-        "Number of Stations Used", "Number of CPUs Allocated for Ray to Use",
-        "Number of Stations Running Predictions Concurrently", "Total Run time for Picker (s)",
-        "Number of GPUs Used", "VRAM Used Per Task"
-    ]
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Drop rows where essential columns are missing
-    df_cleaned = df.dropna(subset=numeric_cols)
-
-    # Find the best number of concurrent predictions for each (Stations, CPUs, GPUs, VRAM) combination
-    optimal_concurrent_preds = df_cleaned.loc[
-        df_cleaned.groupby(["Number of Stations Used", "Number of CPUs Allocated for Ray to Use", 
-                            "Number of GPUs Used", "VRAM Used Per Task"])
-        ["Total Run time for Picker (s)"].idxmin()
-    ]
-
-    # Define what "moderate" means in terms of VRAM usage (e.g., middle 50% of available VRAM)
-    vram_min = df_cleaned["VRAM Used Per Task"].quantile(0.25)
-    vram_max = df_cleaned["VRAM Used Per Task"].quantile(0.75)
-
-    # Filter for rows within the moderate VRAM range
-    df_moderate_vram = df_cleaned[
-        (df_cleaned["VRAM Used Per Task"] >= vram_min) & 
-        (df_cleaned["VRAM Used Per Task"] <= vram_max)
-    ]
-
-    # Sort by the highest number of stations first, then by the fastest runtime
-    best_overall_config = df_moderate_vram.sort_values(
-        by=["Number of Stations Used", "Total Run time for Picker (s)"], 
-        ascending=[False, True]  # Maximize stations, minimize runtime
-    ).iloc[0]
-
-    return optimal_concurrent_preds, best_overall_config
-
-
 def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: bool, eval_sys_results_dir:str): 
     # Check if eval_sys_results_dir is valid
     if not eval_sys_results_dir or not os.path.isdir(eval_sys_results_dir):
@@ -732,7 +688,7 @@ def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: boo
         return exit()  # Exit early if the directory is invalid
     
     if best_overall_usecase is True: 
-        file_path = f"{eval_sys_results_dir}/best_overall_usecase.csv"
+        file_path = f"{eval_sys_results_dir}/best_overall_usecase_cpu.csv"
 
         # Check if the CSV file exists before reading
         if not os.path.exists(file_path):
@@ -792,6 +748,143 @@ def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: boo
             f"Stations: {station_count}\nTotal Runtime (s): {best_config['Total Run time for Picker (s)']}")
 
         return int(float(cpu)), int(float(best_config["Number of Stations Running Predictions Concurrently"])), int(float(best_config["Intra-parallelism Threads"])), int(float(best_config["Inter-parallelism Threads"])), int(float(station_count))
+
+
+def find_optimal_configurations_gpu(df):
+    """
+    Find:
+    1. The best number of concurrent predictions for each (stations, GPUs, VRAM, CPUs) pair that results in the fastest runtime.
+    2. The overall best configuration balancing stations, GPUs, CPUs, VRAM, and runtime.
+    """
+    # Convert relevant columns to numeric, handling NaNs gracefully
+    numeric_cols = [
+        "Number of Stations Used", "Number of CPUs Allocated for Ray to Use",
+        "Number of Stations Running Predictions Concurrently", "Total Run time for Picker (s)",
+        "Number of GPUs Used", "VRAM Used Per Task"
+    ]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Drop rows where essential columns are missing
+    df_cleaned = df.dropna(subset=numeric_cols)
+
+    # Find the best number of concurrent predictions for each (Stations, CPUs, GPUs, VRAM) combination
+    optimal_concurrent_preds = df_cleaned.loc[
+        df_cleaned.groupby(["Number of Stations Used", "Number of CPUs Allocated for Ray to Use", 
+                            "Number of GPUs Used", "VRAM Used Per Task"])
+        ["Total Run time for Picker (s)"].idxmin()
+    ]
+
+    # Define what "moderate" means in terms of VRAM usage (e.g., middle 50% of available VRAM)
+    vram_min = df_cleaned["VRAM Used Per Task"].quantile(0.25)
+    vram_max = df_cleaned["VRAM Used Per Task"].quantile(0.75)
+
+    # Filter for rows within the moderate VRAM range
+    df_moderate_vram = df_cleaned[
+        (df_cleaned["VRAM Used Per Task"] >= vram_min) & 
+        (df_cleaned["VRAM Used Per Task"] <= vram_max)
+    ]
+
+    # Sort by the highest number of stations first, then by the fastest runtime
+    best_overall_config = df_moderate_vram.sort_values(
+        by=["Number of Stations Used", "Total Run time for Picker (s)"], 
+        ascending=[False, True]  # Maximize stations, minimize runtime
+    ).iloc[0]
+
+    return optimal_concurrent_preds, best_overall_config
+
+
+def find_optimal_configuration_gpu(num_cpus, num_gpus, station_count, best_overall_usecase: bool, eval_sys_results_dir: str):
+    """
+    Find the optimal GPU configuration for a given number of CPUs, GPUs, and stations.
+    Returns the best configuration including CPUs, concurrent predictions, intra/inter parallelism threads,
+    GPUs, VRAM, and stations.
+    """
+
+    # Check if eval_sys_results_dir is valid
+    if not eval_sys_results_dir or not os.path.isdir(eval_sys_results_dir):
+        print(f"Error: The provided directory path '{eval_sys_results_dir}' is invalid or does not exist.")
+        print("Please provide a valid directory path for the input parameter 'csv_dir'.")
+        return None  # Exit early if the directory is invalid
+
+    if best_overall_usecase:
+        file_path = f"{eval_sys_results_dir}/best_overall_usecase_gpu.csv"
+
+        # Check if the CSV file exists before reading
+        if not os.path.exists(file_path):
+            print(f"Error: The file '{file_path}' does not exist. Ensure the file is in the correct directory.")
+            return None
+
+        # Load the CSV
+        df_best_overall = pd.read_csv(file_path)
+
+        # Convert into a dictionary for easy access
+        best_config_dict = df_best_overall.set_index(df_best_overall.columns[0]).to_dict()[df_best_overall.columns[1]]
+
+        # Extract required values
+        num_cpus = best_config_dict.get("Number of CPUs Allocated for Ray to Use")
+        num_concurrent_predictions = best_config_dict.get("Number of Stations Running Predictions Concurrently")
+        intra_threads = best_config_dict.get("Intra-parallelism Threads")
+        inter_threads = best_config_dict.get("Inter-parallelism Threads")
+        num_stations = best_config_dict.get("Number of Stations Used")
+        total_runtime = best_config_dict.get("Total Run time for Picker (s)")
+        vram_used = best_config_dict.get("VRAM Used Per Task")
+        num_gpus = best_config_dict.get("Number of GPUs Used")
+
+        print(f"CPU: {num_cpus}\n"
+              f"GPU: {num_gpus}\n"
+              f"Concurrent Predictions: {num_concurrent_predictions}\n"
+              f"Intra-parallelism Threads: {intra_threads}\n"
+              f"Inter-parallelism Threads: {inter_threads}\n"
+              f"Stations: {num_stations}\n"
+              f"VRAM Used: {vram_used}\n"
+              f"Total Runtime (s): {total_runtime}")
+
+        return (int(float(num_cpus)), int(float(num_concurrent_predictions)), 
+                int(float(intra_threads)), int(float(inter_threads)), 
+                int(float(num_gpus)), int(float(vram_used)), int(float(num_stations)))
+
+    else:  # Optimal Configuration for User-Specified CPUs, GPUs, and Number of Stations to use
+        file_path = f"{eval_sys_results_dir}/optimal_configurations_gpu.csv"
+
+        # Check if the CSV file exists before reading
+        if not os.path.exists(file_path):
+            print(f"Error: The file '{file_path}' does not exist. Ensure the file is in the correct directory.")
+            return None
+
+        df_optimal = pd.read_csv(file_path)
+
+        # Convert relevant columns to numeric, handling NaNs gracefully
+        df_optimal["Number of Stations Used"] = pd.to_numeric(df_optimal["Number of Stations Used"], errors="coerce")
+        df_optimal["Number of CPUs Allocated for Ray to Use"] = pd.to_numeric(df_optimal["Number of CPUs Allocated for Ray to Use"], errors="coerce")
+        df_optimal["Number of Stations Running Predictions Concurrently"] = pd.to_numeric(df_optimal["Number of Stations Running Predictions Concurrently"], errors="coerce")
+        df_optimal["Total Run time for Picker (s)"] = pd.to_numeric(df_optimal["Total Run time for Picker (s)"], errors="coerce")
+        df_optimal["Number of GPUs Used"] = pd.to_numeric(df_optimal["Number of GPUs Used"], errors="coerce")
+        df_optimal["VRAM Used Per Task"] = pd.to_numeric(df_optimal["VRAM Used Per Task"], errors="coerce")
+
+        filtered_df = df_optimal[
+            (df_optimal["Number of CPUs Allocated for Ray to Use"] == num_cpus) &
+            (df_optimal["Number of GPUs Used"] == num_gpus) &
+            (df_optimal["Number of Stations Used"] == station_count)
+        ]
+
+        if filtered_df.empty:
+            print("No matching configuration found. Please enter a valid entry.")
+            return None
+
+        # Find the best configuration (fastest runtime)
+        best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
+
+        print(f"CPU: {num_cpus}\n"
+              f"GPU: {num_gpus}\n"
+              f"Concurrent Predictions: {best_config['Number of Stations Running Predictions Concurrently']}\n"
+              f"Intra-parallelism Threads: {best_config['Intra-parallelism Threads']}\n"
+              f"Inter-parallelism Threads: {best_config['Inter-parallelism Threads']}\n"
+              f"Stations: {station_count}\n"
+              f"VRAM Used: {best_config['VRAM Used Per Task']}\n"
+              f"Total Runtime (s): {best_config['Total Run time for Picker (s)']}")
+
+        return int(float(best_config["Number of CPUs Allocated for Ray to Use"])), int(float(best_config["Number of Stations Running Predictions Concurrently"])), int(float(best_config["Intra-parallelism Threads"])), int(float(best_config["Inter-parallelism Threads"])), int(float(num_gpus)), int(float(best_config["VRAM Used Per Task"])), int(float(station_count))
 
 
 
@@ -892,82 +985,83 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
     
     if eval_mode == "gpu":
         csv_filepath = f"{csv_dir}/gpu_test_results.csv" # Define csv filepath for test results 
-        if stations2use is None: 
-            stations2use_list = list(range(1, 11)) + list(range(15, 51, 5))
-        else: 
-            stations2use_list = generate_station_list(stations2use)
+        # if stations2use is None: 
+        #     stations2use_list = list(range(1, 11)) + list(range(15, 51, 5))
+        # else: 
+        #     stations2use_list = generate_station_list(stations2use)
 
-        while True: 
-            choice = input(f"[{datetime.now()}] Would you like to set how much VRAM the GPU can use? (y/n): ").strip().lower()
-            if choice in {"y", "n"}:
-                break
-            print(f"[{datetime.now()}] Invalid input. Please enter 'y' or 'n'.")
+        # while True: 
+        #     choice = input(f"[{datetime.now()}] Would you like to set how much VRAM the GPU can use? (y/n): ").strip().lower()
+        #     if choice in {"y", "n"}:
+        #         break
+        #     print(f"[{datetime.now()}] Invalid input. Please enter 'y' or 'n'.")
         
-        if choice == "y": 
-            free_vram_mb = get_vram()
-            print(f"[{datetime.now()}] VRAM set to {vram} MB.")
-        else:
-            # Setting VRAM
-            print(f"[{datetime.now()}] Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
-            total_vram, available_vram = get_gpu_vram()
-            print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB")
-            print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB")
-            # 95% of the Node's memory can be used by Ray and it's Raylets. 
-            # Beyond the threshold, Ray will begin to kill process to save the node's memory             
-            if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
-                free_vram = total_vram * 0.9485        
+        # if choice == "y": 
+        #     free_vram_mb = get_vram()
+        #     print(f"[{datetime.now()}] VRAM set to {vram} MB.")
+        # else:
+        #     # Setting VRAM
+        #     print(f"[{datetime.now()}] Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
+        #     total_vram, available_vram = get_gpu_vram()
+        #     print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB")
+        #     print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB")
+        #     # 95% of the Node's memory can be used by Ray and it's Raylets. 
+        #     # Beyond the threshold, Ray will begin to kill process to save the node's memory             
+        #     if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
+        #         free_vram = total_vram * 0.9485        
             
-            print(f"[{datetime.now()}] Using up to {round(free_vram, 2)} GB of VRAM (within 94.85% VRAM threshold)")
-            free_vram_mb = free_vram * 1024 # Convert to MB 
+        #     print(f"[{datetime.now()}] Using up to {round(free_vram, 2)} GB of VRAM (within 94.85% VRAM threshold)")
+        #     free_vram_mb = free_vram * 1024 # Convert to MB 
             
-            # Setting GPUs to use 
-            gpu_ids = list_gpu_ids()
-            print(f"\n[{datetime.now()}] Available GPU IDs: {gpu_ids}")
-            selected_gpus = get_valid_gpu_choice(gpu_ids)
-            print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
+        #     # Setting GPUs to use 
+        #     gpu_ids = list_gpu_ids()
+        #     print(f"\n[{datetime.now()}] Available GPU IDs: {gpu_ids}")
+        #     selected_gpus = get_valid_gpu_choice(gpu_ids)
+        #     print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
         
-        cpu_count = int(input(f"\n[{datetime.now()}] How many CPUs would you like Ray to use to manage the parallel processes? (must be int): "))
-        cpu_list = list(range(cpu_count))
-        print(f"[{datetime.now()}] Using {cpu_count} CPUs.")
-        prepare_csv(csv_filepath, True)
-        trial_num = 1 
+        # cpu_count = int(input(f"\n[{datetime.now()}] How many CPUs would you like Ray to use to manage the parallel processes? (must be int): "))
+        # cpu_list = list(range(cpu_count))
+        # print(f"[{datetime.now()}] Using {cpu_count} CPUs.")
+        # prepare_csv(csv_filepath, True)
+        # trial_num = 1 
         
 
-        for num_stations in stations2use_list: # i is the num_stations to use 
-            concurrent_predictions_list = generate_station_list(num_stations)
-            for conc_predictions in concurrent_predictions_list:    
-                vram_per_task_mb = free_vram_mb / conc_predictions
-                # Define step size (5% of max)
-                step_size = vram_per_task_mb * 0.05  
-                # Generate range of values from 5% to 100% of vram_per_task_mb
-                vram_steps = np.arange(step_size, vram_per_task_mb + step_size, step_size)
-                for gpu_memory_limit_mb in vram_steps:           
-                    # Start GPU process
-                    print(f"\n[{datetime.now()}] VRAM Limited to {gpu_memory_limit_mb / 1024:.2f} GB per Task")
-                    process = multiprocessing.Process(
-                        target=run_prediction,
-                        args=(input_dir, output_dir, log_filepath, P_threshold, 
-                            S_threshold, p_model_filepath, s_model_filepath, 
-                            conc_predictions, len(cpu_list), True, num_stations, cpu_list, csv_filepath, intra_threads, inter_threads, True, gpu_memory_limit_mb, selected_gpus)
-                    )
-                    process.start()
-                    process.join()  # Wait for process to complete
+        # for num_stations in stations2use_list: # i is the num_stations to use 
+        #     concurrent_predictions_list = generate_station_list(num_stations)
+        #     for conc_predictions in concurrent_predictions_list:    
+        #         vram_per_task_mb = free_vram_mb / conc_predictions
+        #         # Define step size (5% of max)
+        #         step_size = vram_per_task_mb * 0.05  
+        #         # Generate range of values from 5% to 100% of vram_per_task_mb
+        #         vram_steps = np.arange(step_size, vram_per_task_mb + step_size, step_size)
+        #         for gpu_memory_limit_mb in vram_steps:           
+        #             # Start GPU process
+        #             print(f"\n[{datetime.now()}] VRAM Limited to {gpu_memory_limit_mb / 1024:.2f} GB per Task")
+        #             process = multiprocessing.Process(
+        #                 target=run_prediction,
+        #                 args=(input_dir, output_dir, log_filepath, P_threshold, 
+        #                     S_threshold, p_model_filepath, s_model_filepath, 
+        #                     conc_predictions, len(cpu_list), True, num_stations, cpu_list, csv_filepath, intra_threads, inter_threads, True, gpu_memory_limit_mb, selected_gpus)
+        #             )
+        #             process.start()
+        #             process.join()  # Wait for process to complete
 
-                    # Handle exit codes
-                    if process.exitcode == 0:
-                        update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir, True, gpu_memory_limit_mb)
-                    else:
-                        update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir, True, gpu_memory_limit_mb)
-                    trial_num += 1
+        #             # Handle exit codes
+        #             if process.exitcode == 0:
+        #                 update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir, True, gpu_memory_limit_mb)
+        #             else:
+        #                 update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir, True, gpu_memory_limit_mb)
+        #             trial_num += 1
                     
-        # # Compute optimal configurations (GPU)
-        # df = pd.read_csv(csv_filepath)
-        # optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_gpu(df)
-        # optimal_configuration_df.to_csv(f"{csv_dir}/optimal_configurations_gpu.csv")
-        # best_overall_usecase_df.to_csv(f"{csv_dir}/best_overall_usecase_gpu.csv")
-        # print(f"[{datetime.now()}] Optimal Configurations Found. Findings saved to:\n" 
-        #         f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {csv_dir}/optimal_configurations_gpu.csv\n" 
-        #         f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase_gpu.csv")
+        print(f"[{datetime.now()}] Testing complete.\n[{datetime.now()}] Finding Optimal Configurations...")
+        # Compute optimal configurations (GPU)
+        df = pd.read_csv(csv_filepath)
+        optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_gpu(df)
+        optimal_configuration_df.to_csv(f"{csv_dir}/optimal_configurations_gpu.csv")
+        best_overall_usecase_df.to_csv(f"{csv_dir}/best_overall_usecase_gpu.csv")
+        print(f"[{datetime.now()}] Optimal Configurations Found. Findings saved to:\n" 
+                f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {csv_dir}/optimal_configurations_gpu.csv\n" 
+                f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase_gpu.csv")
                     
             
 def run_EQCCT_mseed(
