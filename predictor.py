@@ -1177,44 +1177,44 @@ def run_EQCCT_mseed(
                     break
                 print(f"Invalid input. Please enter 'y' or 'n'.")
             
-                if choice == "y": 
-                    free_vram_mb = get_vram()
-                    print(f"[{datetime.now()}] VRAM set to {vram} MB.")
-                else:
-                    # Setting VRAM
-                    print(f"[{datetime.now()}] Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
-                    total_vram, available_vram = get_gpu_vram()
-                    print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB")
-                    print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB")
-                    # 95% of the Node's memory can be used by Ray and it's Raylets. 
-                    # Beyond the threshold, Ray will begin to kill process to save the node's memory             
-                    if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
-                        free_vram = total_vram * 0.9485        
-                    
-                    print(f"[{datetime.now()}] Using {round(free_vram, 2)} GB VRAM (within 94.85% VRAM threshold)")
-                    free_vram_mb = free_vram * 1024 # Convert to MB 
-                    
-                    # Setting GPUs to use 
-                    gpu_ids = list_gpu_ids()
-                    print(f"[{datetime.now()}] Available GPU IDs: {gpu_ids}")
-                    selected_gpus = get_valid_gpu_choice(gpu_ids)
-                    print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
-                    
-                vram_per_task_mb = free_vram_mb / number_of_concurrent_predictions
+            if choice == "y": 
+                free_vram_mb = get_vram()
+                print(f"[{datetime.now()}] VRAM set to {vram} MB.")
+            else:
+                # Setting VRAM
+                print(f"[{datetime.now()}] Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
+                total_vram, available_vram = get_gpu_vram()
+                print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB")
+                print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB")
+                # 95% of the Node's memory can be used by Ray and it's Raylets. 
+                # Beyond the threshold, Ray will begin to kill process to save the node's memory             
+                if available_vram / total_vram >= 0.9486: # 94.86% as a saftey value threshold, can use 94.85% and below 
+                    free_vram = total_vram * 0.9485        
                 
-                tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_per_task_mb, gpus_to_use=selected_gpus, intra_threads=intra_threads, inter_threads=inter_threads)
-                mseed_predictor(input_dir=input_dir, 
-                        output_dir=output_dir, 
-                        log_file=log_filepath, 
-                        P_threshold=P_threshold, 
-                        S_threshold=S_threshold, 
-                        p_model=p_model_filepath, 
-                        s_model=s_model_filepath, 
-                        number_of_concurrent_predictions=number_of_concurrent_predictions, 
-                        ray_cpus=ray_cpus,
-                        use_gpu=True,
-                        gpu_id=selected_gpus, 
-                        gpu_memory_limit_mb=vram_per_task_mb)
+                print(f"[{datetime.now()}] Using {round(free_vram, 2)} GB VRAM (within 94.85% VRAM threshold)")
+                free_vram_mb = free_vram * 1024 # Convert to MB 
+                
+                # Setting GPUs to use 
+                gpu_ids = list_gpu_ids()
+                print(f"[{datetime.now()}] Available GPU IDs: {gpu_ids}")
+                selected_gpus = get_valid_gpu_choice(gpu_ids)
+                print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
+                
+            vram_per_task_mb = free_vram_mb / number_of_concurrent_predictions
+            
+            tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_per_task_mb, gpus_to_use=selected_gpus, intra_threads=intra_threads, inter_threads=inter_threads)
+            mseed_predictor(input_dir=input_dir, 
+                    output_dir=output_dir, 
+                    log_file=log_filepath, 
+                    P_threshold=P_threshold, 
+                    S_threshold=S_threshold, 
+                    p_model=p_model_filepath, 
+                    s_model=s_model_filepath, 
+                    number_of_concurrent_predictions=number_of_concurrent_predictions, 
+                    ray_cpus=ray_cpus,
+                    use_gpu=True,
+                    gpu_id=selected_gpus, 
+                    gpu_memory_limit_mb=vram_per_task_mb)
         
     
     
