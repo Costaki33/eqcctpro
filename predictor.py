@@ -681,6 +681,7 @@ def find_optimal_configuration_cpu(best_overall_usecase:bool, eval_sys_results_d
         num_stations = best_config_dict.get("Number of Stations Used")
         total_runtime = best_config_dict.get("Total Run time for Picker (s)")
         
+        print("Best Overall Usecase Configuration Based on Trial Data:")
         print(f"CPU: {num_cpus}\n"
         f"Concurrent Predictions: {num_concurrent_predictions}\n"
         f"Intra-parallelism Threads: {intra_threads}\n"
@@ -721,6 +722,8 @@ def find_optimal_configuration_cpu(best_overall_usecase:bool, eval_sys_results_d
 
         # Find the best configuration (fastest runtime)
         best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
+        
+        print("Best Configuration for Requested Application Usecase Based on Trial Data:")
         print(f"CPU: {cpu}\nConcurrent Predictions: {best_config['Number of Stations Running Predictions Concurrently']}\n"
             f"Intra-parallelism Threads: {best_config['Intra-parallelism Threads']}\n"
             f"Inter-parallelism Threads: {best_config['Inter-parallelism Threads']}\n"
@@ -820,7 +823,7 @@ def find_optimal_configuration_gpu(best_overall_usecase: bool, eval_sys_results_
         num_gpus_st = best_config_dict.get("GPUs Used")
         num_gpus = ast.literal_eval(num_gpus_st)
         
-
+        print("Best Overall Usecase Configuration Based on Trial Data:")
         print(f"CPU: {num_cpus}\n"
               f"GPU ID(s): {num_gpus}\n"
               f"Concurrent Predictions: {num_concurrent_predictions}\n"
@@ -875,7 +878,8 @@ def find_optimal_configuration_gpu(best_overall_usecase: bool, eval_sys_results_
 
         # Find the best configuration (fastest runtime)
         best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
-
+        
+        print("Best Configuration for Requested Application Usecase Based on Trial Data:")
         print(f"CPU: {num_cpus}\n"
               f"GPU: {num_gpus}\n"
               f"Concurrent Predictions: {best_config['Number of Stations Running Predictions Concurrently']}\n"
@@ -1115,7 +1119,7 @@ def run_EQCCT_mseed(
         if choice == "y":
             print(f"csv_dir: {csv_dir}")
             cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(True, csv_dir)
-            print(f"[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads")
+            print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads")
             tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
             mseed_predictor(input_dir=input_dir, 
                     output_dir=output_dir, 
@@ -1151,9 +1155,9 @@ def run_EQCCT_mseed(
             print(f"Invalid input. Please enter 'y' or 'n'.")
             
         if optimal_choice == "y": 
-            cpus_to_use, num_concurrent_predictions, intra, inter, num_gpus, vram_mb, station_count = find_optimal_configuration_gpu(True, csv_dir)
-            print(f"[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, {inter} Inter Threads, {num_gpus} GPUs, and {vram_mb} MB VRAM per Task")
-            tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_mb, gpus_to_use=selected_gpus, intra_threads=intra, inter_threads=inter)
+            cpus_to_use, num_concurrent_predictions, intra, inter, gpus, vram_mb, station_count = find_optimal_configuration_gpu(True, csv_dir)
+            print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, {inter} Inter Threads, {gpus} GPU IDs, and {vram_mb} MB VRAM per Task")
+            tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_mb, gpus_to_use=gpus, intra_threads=intra, inter_threads=inter)
             mseed_predictor(input_dir=input_dir, 
                         output_dir=output_dir, 
                         log_file=log_filepath, 
@@ -1164,7 +1168,7 @@ def run_EQCCT_mseed(
                         number_of_concurrent_predictions=num_concurrent_predictions, 
                         ray_cpus=cpus_to_use,
                         use_gpu=True,
-                        gpu_id=selected_gpus,  # <- FIX 
+                        gpu_id=gpus,
                         gpu_memory_limit_mb=vram_mb)
         else: 
             while True:
