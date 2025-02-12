@@ -1101,7 +1101,8 @@ def run_EQCCT_mseed(
             print("Invalid input. Please enter 'y' or 'n'.")
         
         if choice == "y":
-            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(1, 1, True, f'{csv_dir}')
+            print(f"csv_dir: {csv_dir}")
+            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(True, csv_dir)
             print(f"[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads")
             tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
             mseed_predictor(input_dir=input_dir, 

@@ -7,7 +7,7 @@ from predictor import run_EQCCT_mseed, evaluate_system, find_optimal_configurati
 input_mseed_directory_path = '/home/skevofilaxc/eqcctpro/mseed/20241215T115800Z_20241215T120100Z'   
 output_pick_directory_path = '/home/skevofilaxc/eqcctpro/outputs'
 log_file_path = '/home/skevofilaxc/eqcctpro/outputs/eqcctpro.log'
-csv_filepath = '/home/skevofilaxc/eqcctpro/csv'
+csv_filepath = '/home/skevofilaxc/eqcctpro/csv/'
 
 # Can run EQCCT on a given input dir on GPU or CPU 
 # Can also specify the number of stations you want to use as well  
@@ -22,7 +22,8 @@ run_EQCCT_mseed(use_gpu=False,
                 S_threshold=0.02, 
                 p_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_024.h5', 
                 s_model_filepath='/home/skevofilaxc/model/ModelPS/test_trainer_021.h5', 
-                number_of_concurrent_predictions=5)
+                number_of_concurrent_predictions=5,
+                csv_dir=csv_filepath)
 
 # Can evalue your system by using the test input directory
 # Can either evaluate your system on the entire input dir or on a specific number of stations you want to evaluate 
