@@ -680,7 +680,7 @@ def find_optimal_configurations_cpu(df):
     return optimal_concurrent_preds, best_overall_config
 
 
-def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: bool, eval_sys_results_dir:str): 
+def find_optimal_configuration_cpu(best_overall_usecase:bool, eval_sys_results_dir:str, cpu:int=None, station_count:int=None): 
     # Check if eval_sys_results_dir is valid
     if not eval_sys_results_dir or not os.path.isdir(eval_sys_results_dir):
         print(f"Error: The provided directory path '{eval_sys_results_dir}' is invalid or does not exist.")
@@ -719,12 +719,18 @@ def find_optimal_configuration_cpu(cpu, station_count, best_overall_usecase: boo
         return int(float(num_cpus)), int(float(num_concurrent_predictions)), int(float(intra_threads)), int(float(inter_threads)), int(float(num_stations))
     
     else: # Optimal Configuration for User-Specified CPUs and Number of Stations to use
+        # Ensure valid CPU and station count values
+        if cpu is None or station_count is None:
+            print("Error: CPU and station_count must have valid values.")
+            return exit()
+        
         file_path = f"{eval_sys_results_dir}/optimal_configurations_cpu.csv"
 
         # Check if the CSV file exists before reading
         if not os.path.exists(file_path):
             print(f"Error: The file '{file_path}' does not exist. Ensure the file is in the correct directory.")
             return exit() 
+        
         
         df_optimal = pd.read_csv(file_path)
 
@@ -794,7 +800,7 @@ def find_optimal_configurations_gpu(df):
     return optimal_concurrent_preds, best_overall_config
 
 
-def find_optimal_configuration_gpu(num_cpus, num_gpus, station_count, best_overall_usecase: bool, eval_sys_results_dir: str):
+def find_optimal_configuration_gpu(best_overall_usecase:bool, eval_sys_results_dir: str, num_cpus:int=None, num_gpus:int=None, station_count:int=None):
     """
     Find the optimal GPU configuration for a given number of CPUs, GPUs, and stations.
     Returns the best configuration including CPUs, concurrent predictions, intra/inter parallelism threads,
@@ -840,11 +846,14 @@ def find_optimal_configuration_gpu(num_cpus, num_gpus, station_count, best_overa
               f"VRAM Used: {vram_used}\n"
               f"Total Runtime (s): {total_runtime}")
 
-        return (int(float(num_cpus)), int(float(num_concurrent_predictions)), 
-                int(float(intra_threads)), int(float(inter_threads)), 
-                int(float(num_gpus)), int(float(vram_used)), int(float(num_stations)))
+        return int(float(num_cpus)), int(float(num_concurrent_predictions)),int(float(intra_threads)), int(float(inter_threads)), int(float(num_gpus)), int(float(vram_used)), int(float(num_stations))
 
     else:  # Optimal Configuration for User-Specified CPUs, GPUs, and Number of Stations to use
+        # Ensure valid CPU and station count values
+        if num_cpus is None or station_count is None or num_gpus is None:
+            print("Error: num_cpus and station_count and num_gpus must have valid values.")
+            return exit()
+        
         file_path = f"{eval_sys_results_dir}/optimal_configurations_gpu.csv"
 
         # Check if the CSV file exists before reading
