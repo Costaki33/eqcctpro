@@ -367,13 +367,27 @@ def create_cct_modelS(inputs):
 
 
 def tf_environ(gpu_id, gpu_memory_limit_mb=None, gpus_to_use=None, intra_threads=None, inter_threads=None):
-    print(f"\n-----------------------------\nTensorflow and Ray Configuration...\n")
+    print(f"-----------------------------\nTensorflow and Ray Configuration...\n")
     tf.debugging.set_log_device_placement(True)
+    gpus = tf.config.experimental.list_physical_devices('GPU')  # Get available GPUs
+    available_gpu_ids = list(range(len(gpus)))  # Create a list of available GPU indices, e.g., [0, 1, 2]
     
     if gpu_id != -1:
-        os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(map(str, gpus_to_use)) # Sets CUDA_VISIBLE_DEVICES = to the selected GPUs
-        print(f"[{datetime.now()}] GPU processing enabled. Using GPUs: {gpus_to_use}")
-        gpus = tf.config.experimental.list_physical_devices('GPU') # Lists all available GPUs to Tensorflow 
+        if gpus_to_use is None:
+            print(f"[{datetime.now()}] No GPUs specified, using CPUs.")
+            return
+        
+        # Check if all requested GPUs exist
+        invalid_gpus = [gpu for gpu in gpus_to_use if gpu not in available_gpu_ids]
+        
+        if invalid_gpus:
+            print(f"[{datetime.now()}] Inputted GPU(s) {invalid_gpus} do not exist. Exiting...")
+            # os.environ['CUDA_VISIBLE_DEVICES'] = ""  # Disable GPU usage
+            # print(f"")
+            exit() 
+        else:
+            os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(map(str, gpus_to_use))  # Set visible GPUs
+            print(f"[{datetime.now()}] GPU processing enabled. Using GPUs: {gpus_to_use}")
         
         if gpus:
             try:
@@ -443,18 +457,6 @@ def load_eqcct_model(input_modelP, input_modelS, log_file="results/logs/model.lo
     return model
 
 
-def get_vram():
-    """Prompt the user for VRAM input and ensure it's a valid float."""
-    while True:
-        try:
-            vram = float(input(f"[{datetime.now()}] Enter how much VRAM the GPU can use (MB): ").strip())
-            if vram > 0:
-                return vram
-            print("VRAM must be a positive number.")
-        except ValueError:
-            print("Invalid input. Please enter a number.")
-
-
 def get_gpu_vram():
     """Retrieve total and free VRAM (in GB) for the current GPU."""
     pynvml.nvmlInit()  # Initialize NVML
@@ -470,30 +472,7 @@ def list_gpu_ids():
     gpu_count = pynvml.nvmlDeviceGetCount()  # Get number of GPUs
     gpu_ids = list(range(gpu_count))  # Create a list of GPU indices
     pynvml.nvmlShutdown()  # Shutdown NVML
-    return gpu_ids
-
-def get_valid_gpu_choice(available_gpus):
-    """Prompt user to select GPU IDs and ensure they are valid."""
-    while True:
-        choice = input(f"[{datetime.now()}] Which GPU ID(s) would you like to use? (comma-separated, e.g., 0,1) or 'all' for all: ").strip()
-        
-        if choice.lower() == "all":
-            return available_gpus  # Use all available GPUs
-        
-        try:
-            selected_gpus = [int(x.strip()) for x in choice.split(",")]
-            
-            # Ensure all selected GPUs exist in the available list
-            if all(gpu in available_gpus for gpu in selected_gpus):
-                return selected_gpus
-            else:
-                print(f"[{datetime.now()}] Invalid choice. Please select from available GPUs: {available_gpus}")
-
-        except ValueError:
-            print(f"[{datetime.now()}] Invalid input. Please enter numeric GPU IDs separated by commas.")
-            
-            
-            
+    return gpu_ids          
             
 def prepare_csv(csv_file_path, gpu:bool=False):
     """
@@ -760,7 +739,6 @@ def find_optimal_configurations_gpu(df):
         ["Total Run time for Picker (s)"].idxmin()
     ]
 
-    # ✅ Convert "GPUs Used" back to lists after groupby()
     optimal_concurrent_preds["GPUs Used"] = optimal_concurrent_preds["GPUs Used"].apply(lambda x: list(x) if isinstance(x, tuple) else x)
 
     # Define what "moderate" means in terms of VRAM usage (e.g., middle 50% of available VRAM)
@@ -779,7 +757,6 @@ def find_optimal_configurations_gpu(df):
         ascending=[False, True]  # Maximize stations, minimize runtime
     ).iloc[0]
 
-    # ✅ Convert "GPUs Used" in best_overall_config back to list
     best_overall_config["GPUs Used"] = list(best_overall_config["GPUs Used"]) if isinstance(best_overall_config["GPUs Used"], tuple) else best_overall_config["GPUs Used"]
 
     return optimal_concurrent_preds, best_overall_config
@@ -898,18 +875,10 @@ def find_optimal_configuration_gpu(best_overall_usecase: bool, eval_sys_results_
                int(float(station_count))
 
 
-def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_dir:str, output_dir:str, log_filepath, csv_dir, P_threshold, S_threshold, p_model_filepath, s_model_filepath, stations2use:int=None): 
+def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_dir:str, output_dir:str, log_filepath, csv_dir, P_threshold, S_threshold, p_model_filepath, s_model_filepath, stations2use:int=None, cpu_id_list:list=[1], set_vram_mb:float=None, selected_gpus:list=None): 
     """
     evaluate_system will evaluate a given system's hardware to find the optimal amount of CPUs/GPUs and concurrent predictions to use 
-    """
-    print(r"""                     _                   
-  ___  __ _  ___ ___| |_ _ __  _ __ ___  
- / _ \/ _` |/ __/ __| __| '_ \| '__/ _ \ 
-|  __/ (_| | (_| (__| |_| |_) | | | (_) |
- \___|\__, |\___\___|\__| .__/|_|  \___/ 
-         |_|            |_|                                
-    """)
-    
+    """    
     # Set options to display all rows and columns
     pd.set_option('display.max_rows', None)
     pd.set_option('display.max_columns', None)
@@ -928,70 +897,36 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
         print(f"Evaluating System Parallelization Capability using CPUs\n")
         remove_directory(output_dir) # Remove output dir before it begins for maximum cleaning
         csv_filepath = f"{csv_dir}/cpu_test_results.csv" # Define csv filepath for test results 
-        while True: 
-            choice = input(f"[{datetime.now()}] Would you like to test your entire system (up to all CPUs available)? (y/n): ").strip().lower()
-            if choice in {"y", "n"}:
-                break
-            print(f"[{datetime.now()}] Invalid input. Please enter 'y' or 'n'.")
-        
-        if choice == "y": 
-            cpu_count = os.cpu_count()
-            cpu_list = list(range(cpu_count))
-            print(f"[{datetime.now()}] Testing using up to all {cpu_count} available CPUs...")
-                        
-            prepare_csv(csv_filepath, False)
-            trial_num = 1
-            for i in range(1, cpu_count+1):
-                cpus_to_use = cpu_list[:i]
-                for j in stations2use_list:
-                    # Define num of concurrent predictions per iteration
-                    concurrent_predictions_list = generate_station_list(j) 
-                    for k in concurrent_predictions_list: 
-                        # Start a new process with CPU affinity
-                        print(f"\nTrial Number: {trial_num}")
-                        process = multiprocessing.Process(
-                            target=run_prediction,
-                            args=(input_dir, output_dir, log_filepath, P_threshold, 
-                                  S_threshold, p_model_filepath, s_model_filepath, 
-                                  k, i, False, j, cpus_to_use, csv_filepath, intra_threads, inter_threads, False)
-                        )
-                        process.start()
-                        process.join()  # Wait for process to complete before continuing
-                        
-                        if process.exitcode == 0: 
-                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir)
-                        else: 
-                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir)
-                        trial_num += 1
-        if choice == "n": 
-            cpu_count = int(input("How many CPUs would you like to use? (must be int): "))
-            cpu_list = list(range(cpu_count))
-            print(f"[{datetime.now()}] Testing using up to all {cpu_count} available CPUs...")
-                        
-            prepare_csv(csv_filepath, False)
-            trial_num = 1
-            for i in range(1, cpu_count+1):
-                cpus_to_use = cpu_list[:i]
-                for j in stations2use_list:
-                    # Define num of concurrent predictions per iteration
-                    concurrent_predictions_list = generate_station_list(j) 
-                    for k in concurrent_predictions_list: 
-                        # Start a new process with CPU affinity
-                        print(f"\nTrial Number: {trial_num}")
-                        process = multiprocessing.Process(
-                            target=run_prediction,
-                            args=(input_dir, output_dir, log_filepath, P_threshold, 
-                                  S_threshold, p_model_filepath, s_model_filepath, 
-                                  k, i, False, j, cpus_to_use, csv_filepath, intra_threads, inter_threads, False)
-                        )
-                        process.start()
-                        process.join()  # Wait for process to complete before continuing
-                        
-                        if process.exitcode == 0: 
-                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir)
-                        else: 
-                            update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir)
-                        trial_num += 1
+ 
+        cpu_count = len(cpu_id_list)
+        cpu_list = cpu_id_list
+        print(f"[{datetime.now()}] Testing using up to all {cpu_count} available CPUs...")
+                    
+        prepare_csv(csv_filepath, False)
+        trial_num = 1
+        for i in range(1, cpu_count+1):
+            cpus_to_use = cpu_list[:i]
+            for j in stations2use_list:
+                # Define num of concurrent predictions per iteration
+                concurrent_predictions_list = generate_station_list(j) 
+                for k in concurrent_predictions_list: 
+                    # Start a new process with CPU affinity
+                    print(f"\nTrial Number: {trial_num}")
+                    process = multiprocessing.Process(
+                        target=run_prediction,
+                        args=(input_dir, output_dir, log_filepath, P_threshold, 
+                                S_threshold, p_model_filepath, s_model_filepath, 
+                                k, i, False, j, cpus_to_use, csv_filepath, intra_threads, inter_threads, False)
+                    )
+                    process.start()
+                    process.join()  # Wait for process to complete before continuing
+                    
+                    if process.exitcode == 0: 
+                        update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 1, "", output_dir)
+                    else: 
+                        update_csv(csv_filepath, trial_num, intra_threads, inter_threads, 0, process.exitcode, output_dir)
+                    trial_num += 1
+
             
         print(f"[{datetime.now()}] Testing complete.\n[{datetime.now()}] Finding Optimal Configurations...")
         # Compute optimal configurations (CPU)
@@ -1012,14 +947,8 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
         else: 
             stations2use_list = generate_station_list(stations2use)
 
-        while True: 
-            choice = input(f"[{datetime.now()}] Would you like to set how much VRAM the GPU can use? (y/n): ").strip().lower()
-            if choice in {"y", "n"}:
-                break
-            print(f"[{datetime.now()}] Invalid input. Please enter 'y' or 'n'.")
-        
-        if choice == "y": 
-            free_vram_mb = get_vram()
+        if set_vram_mb is not None: 
+            free_vram_mb = set_vram_mb
             print(f"[{datetime.now()}] VRAM set to {free_vram_mb} MB.")
         else:
             # Setting VRAM
@@ -1036,23 +965,19 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
             free_vram_mb = free_vram * 1024 # Convert to MB 
             
         # Setting GPUs to use 
-        gpu_ids = list_gpu_ids()
-        print(f"\n[{datetime.now()}] Available GPU IDs: {gpu_ids}")
-        selected_gpus = get_valid_gpu_choice(gpu_ids)
+        if selected_gpus: 
+            selected_gpus = selected_gpus
+        else: 
+            selected_gpus = list_gpu_ids()
         print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
         
-        while True:
-            try:
-                cpu_count = int(input(f"\n[{datetime.now()}] How many CPUs would you like Ray to use to manage the parallel processes? (must be an integer, minimum 1): "))
-                if cpu_count >= 1:
-                    break  # Exit the loop if input is valid
-                else:
-                    print(f"[{datetime.now()}] Invalid input. CPU count must be at least 1.")
-            except ValueError:
-                print(f"[{datetime.now()}] Invalid input. Please enter an integer.")
-
-        cpu_list = list(range(cpu_count))
-        print(f"[{datetime.now()}] Using {cpu_count} CPUs.")
+        cpu_count = len(cpu_id_list)
+        if cpu_count < 1: 
+            print(f"Must use at least 1 CPU. Exiting")
+            exit()
+            
+        cpu_list = cpu_id_list
+        print(f"[{datetime.now()}] Testing using up to all {cpu_count} available CPUs...")
         
         prepare_csv(csv_filepath, True)
         trial_num = 1 
@@ -1098,7 +1023,6 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
             
 def run_EQCCT_mseed(
         use_gpu: bool, 
-        ray_cpus: int, 
         input_dir: str, 
         output_dir: str, 
         log_filepath: str, 
@@ -1110,27 +1034,20 @@ def run_EQCCT_mseed(
         P_threshold: float = 0.001, 
         S_threshold: float = 0.02,
         specific_stations: str = None,
-        csv_dir:str = None):
+        csv_dir: str = None,
+        best_usecase_config: bool = None,
+        set_vram_mb: float = None,
+        selected_gpus: list = None,
+        cpu_id_list: list = [1]):
     """
     run_EQCCT_mseed enables users to use EQCCT to generate picks on MSEED files
     """
-    print(r"""                     _                   
-  ___  __ _  ___ ___| |_ _ __  _ __ ___  
- / _ \/ _` |/ __/ __| __| '_ \| '__/ _ \ 
-|  __/ (_| | (_| (__| |_| |_) | | | (_) |
- \___|\__, |\___\___|\__| .__/|_|  \___/ 
-         |_|            |_|                                
-    """)   
+    cpu_count = len(cpu_id_list)
+    cpu_list = cpu_id_list
     # CPU Usage
     if use_gpu is False:
-        print(f"Running EQCCT over MSeed Files with CPUs") 
-        while True: 
-            choice = input(f"\n[{datetime.now()}] Do you want to use best overall usecase configuration based off of the trial data? (y/n): ").strip().lower()
-            if choice in {"y", "n"}:
-                break
-            print("Invalid input. Please enter 'y' or 'n'.")
-        
-        if choice == "y":
+        print(f"\nRunning EQCCT over MSeed Files with CPUs") 
+        if best_usecase_config is True:
             cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(True, csv_dir)
             print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads")
             tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
@@ -1155,24 +1072,18 @@ def run_EQCCT_mseed(
                     p_model=p_model_filepath, 
                     s_model=s_model_filepath, 
                     number_of_concurrent_predictions=number_of_concurrent_predictions, 
-                    ray_cpus=ray_cpus,
+                    ray_cpus=cpu_count,
                     use_gpu=False,
                     specific_stations=specific_stations)
         
     # GPU Usage   
     if use_gpu is True:  
-        print(f"Running EQCCT over MSeed Files with GPUs")    
-        while True:
-            optimal_choice = input(f"\n[{datetime.now()}] Do you want to use best overall usecase configuration based off of the trial data? (y/n): ").strip().lower()
-            if optimal_choice in {"y", "n"}:
-                break
-            print(f"Invalid input. Please enter 'y' or 'n'.")
-            
-        if optimal_choice == "y": 
+        print(f"\nRunning EQCCT over MSeed Files with GPUs")    
+        if best_usecase_config is True: 
             result = find_optimal_configuration_gpu(True, csv_dir)
             if result is None:
                 print(f"[{datetime.now()}] Error: Could not retrieve an optimal GPU configuration. Please check the CSV file and try again.")
-                exit()  # Exit gracefully or handle the error as needed
+                exit()  # Exit gracefully
             # Unpack values only if result is valid
             cpus_to_use, num_concurrent_predictions, intra, inter, gpus, vram_mb, station_count = result
             
@@ -1191,14 +1102,8 @@ def run_EQCCT_mseed(
                         gpu_id=gpus,
                         gpu_memory_limit_mb=vram_mb)
         else: 
-            while True:
-                choice = input(f"[{datetime.now()}] Would you like to set how much VRAM the GPU can use? (y/n): ").strip().lower()
-                if choice in {"y", "n"}:
-                    break
-                print(f"Invalid input. Please enter 'y' or 'n'.")
-            
-            if choice == "y": 
-                free_vram_mb = get_vram()
+            if set_vram_mb is not None: 
+                free_vram_mb = set_vram_mb
                 print(f"[{datetime.now()}] VRAM set to {free_vram_mb} MB.")
             else:
                 # Setting VRAM
@@ -1215,10 +1120,12 @@ def run_EQCCT_mseed(
                 free_vram_mb = free_vram * 1024 # Convert to MB 
                 
             # Setting GPUs to use 
-            gpu_ids = list_gpu_ids()
-            print(f"[{datetime.now()}] Available GPU IDs: {gpu_ids}")
-            selected_gpus = get_valid_gpu_choice(gpu_ids)
+            if selected_gpus: 
+                selected_gpus = selected_gpus
+            else: 
+                selected_gpus = list_gpu_ids()
             print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
+
                 
             vram_per_task_mb = free_vram_mb / number_of_concurrent_predictions
             
@@ -1231,7 +1138,7 @@ def run_EQCCT_mseed(
                     p_model=p_model_filepath, 
                     s_model=s_model_filepath, 
                     number_of_concurrent_predictions=number_of_concurrent_predictions, 
-                    ray_cpus=ray_cpus,
+                    ray_cpus=cpu_count,
                     use_gpu=True,
                     gpu_id=selected_gpus, 
                     gpu_memory_limit_mb=vram_per_task_mb)
