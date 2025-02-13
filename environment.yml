@@ -1,4 +1,4 @@
-name: eqcctpro_clean
+name: eqcct_pro
 channels:
   - defaults
 dependencies:
@@ -111,4 +111,4 @@ dependencies:
     - wheel==0.45.1
     - wrapt==1.14.1
     - zope-interface==7.2
-prefix: /home/skevofilaxc/.conda/envs/eqcctpro_clean
+prefix: /home/skevofilaxc/.conda/envs/eqcct_pro
