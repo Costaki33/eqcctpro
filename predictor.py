@@ -851,7 +851,7 @@ def find_optimal_configuration_gpu(best_overall_usecase: bool, eval_sys_results_
 
         if filtered_df.empty:
             print("No matching configuration found. Please enter a valid entry.")
-            return None
+            exit()
 
         # Find the best configuration (fastest runtime)
         best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
@@ -1056,6 +1056,7 @@ def run_EQCCT_mseed(
     """
     cpu_count = len(cpu_id_list)
     cpu_list = cpu_id_list
+    
     # CPU Usage
     if use_gpu is False:
         print(f"\nRunning EQCCT over MSeed Files with CPUs") 
@@ -1112,7 +1113,8 @@ def run_EQCCT_mseed(
                         ray_cpus=cpus_to_use,
                         use_gpu=True,
                         gpu_id=gpus,
-                        gpu_memory_limit_mb=vram_mb)
+                        gpu_memory_limit_mb=vram_mb,
+                        specific_stations=specific_stations)
         else: 
             if set_vram_mb is not None: 
                 free_vram_mb = set_vram_mb
@@ -1153,7 +1155,8 @@ def run_EQCCT_mseed(
                     ray_cpus=cpu_count,
                     use_gpu=True,
                     gpu_id=selected_gpus, 
-                    gpu_memory_limit_mb=vram_per_task_mb)
+                    gpu_memory_limit_mb=vram_per_task_mb,
+                    specific_stations=specific_stations)
         
     
     
