@@ -381,7 +381,7 @@ def tf_environ(gpu_id, gpu_memory_limit_mb=None, gpus_to_use=None, intra_threads
         invalid_gpus = [gpu for gpu in gpus_to_use if gpu not in available_gpu_ids]
         
         if invalid_gpus:
-            print(f"[{datetime.now()}] Inputted GPU(s) {invalid_gpus} do not exist. Exiting...")
+            print(f"[{datetime.now()}] Inputted GPU ID(s) {invalid_gpus} do not exist. Exiting...")
             # os.environ['CUDA_VISIBLE_DEVICES'] = ""  # Disable GPU usage
             # print(f"")
             exit() 
@@ -971,6 +971,18 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
             selected_gpus = list_gpu_ids()
         print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
         
+        tf.debugging.set_log_device_placement(True)
+        gpus = tf.config.experimental.list_physical_devices('GPU')  # Get available GPUs
+        available_gpu_ids = list(range(len(gpus)))  # Create a list of available GPU indices, e.g., [0, 1, 2]
+    
+        # Check if all requested GPUs exist
+        invalid_gpus = [gpu for gpu in selected_gpus if gpu not in available_gpu_ids]
+        
+        if invalid_gpus:
+            print(f"[{datetime.now()}] Inputted GPU ID(s) {invalid_gpus} do not exist. Exiting...")
+            exit()
+        
+        
         cpu_count = len(cpu_id_list)
         if cpu_count < 1: 
             print(f"Must use at least 1 CPU. Exiting")
@@ -1082,7 +1094,7 @@ def run_EQCCT_mseed(
         if best_usecase_config is True: 
             result = find_optimal_configuration_gpu(True, csv_dir)
             if result is None:
-                print(f"[{datetime.now()}] Error: Could not retrieve an optimal GPU configuration. Please check the CSV file and try again.")
+                print(f"\n[{datetime.now()}] Error: Could not retrieve an optimal GPU configuration. Please check the CSV file and try again.")
                 exit()  # Exit gracefully
             # Unpack values only if result is valid
             cpus_to_use, num_concurrent_predictions, intra, inter, gpus, vram_mb, station_count = result
