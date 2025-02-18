@@ -1,6 +1,16 @@
 import os
-import ast
 import sys
+
+# Save the original stderr (so we can restore it later if needed)
+original_stderr = sys.stderr
+
+# Open /dev/null to discard unwanted logs
+devnull = open(os.devnull, 'w')
+
+# Redirect only TensorFlow-related logs to /dev/null
+os.dup2(devnull.fileno(), sys.stderr.fileno())
+
+import ast
 import ray
 import csv
 import time
@@ -25,10 +35,17 @@ import tensorflow as tf
 import pynvml 
 import warnings
 import multiprocessing
-warnings.filterwarnings("ignore")
+import absl.logging
 from silence_tensorflow import silence_tensorflow
-silence_tensorflow()
 
+# Silence TensorFlow logging
+absl.logging.set_verbosity(absl.logging.ERROR)
+tf.get_logger().setLevel('ERROR')
+tf.autograph.set_verbosity(0)
+warnings.filterwarnings("ignore")
+silence_tensorflow()
+# Restore stderr after TensorFlow initialization
+sys.stderr = original_stderr
 
 def recall(y_true, y_pred):
     true_positives = tf.keras.backend.sum(tf.keras.backend.round(tf.keras.backend.clip(y_true * y_pred, 0, 1)))
