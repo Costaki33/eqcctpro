@@ -1077,7 +1077,7 @@ class EQCCTMSeedRunner():
     def configure_cpu(self): 
         print(f"\nRunning EQCCT over MSeed Files with CPUs...")
         if self.best_usecase_config:
-            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(True, self.csv_dir)
+            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = (True, self.csv_dir)
             print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads...")
             tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
             self.run_mseed_predictor(cpus_to_use, num_concurrent_predictions)
@@ -1320,6 +1320,171 @@ class EvaluateSystem():
         print(f"[{datetime.now()}] Using up to {round(free_vram, 2)} GB of VRAM.")
         return free_vram * 1024  # Convert to MB
 
+class OptimalCPUConfigurationFinder: 
+    """Finds the optimal CPU configuration based on evaluation results"""
+    def __init__(self, eval_sys_results_dir: str):
+        if not eval_sys_results_dir or not os.path.isdir(eval_sys_results_dir): 
+            raise ValueError(f"Error: The provided directory path '{eval_sys_results_dir}' is invalid or does not exist.")
+        self.eval_sys_results_dir = eval_sys_results_dir
+
+    def find_best_overall_usecase(self):
+        """Finds the best overall CPU usecase configuation from eval results"""
+        file_path = f"{self.eval_sys_results_dir}/best_overall_usecase_cpu.csv"
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"[{datetime.now()}] Error: The file '{file_path}' does not exist. Ensure it is in the correct directory.")
+
+        df_best_overall = pd.read_csv(file_path)
+        best_config_dict = df_best_overall.set_index(df_best_overall.columns[0]).to_dict()[df_best_overall.columns[1]]
+
+        num_cpus = best_config_dict.get("Number of CPUs Allocated for Ray to Use")
+        num_concurrent_predictions = best_config_dict.get("Number of Stations Running Predictions Concurrently")
+        intra_threads = best_config_dict.get("Intra-parallelism Threads")
+        inter_threads = best_config_dict.get("Inter-parallelism Threads")
+        num_stations = best_config_dict.get("Number of Stations Used")
+        total_runtime = best_config_dict.get("Total Run time for Picker (s)")
+
+        print("\nBest Overall Usecase Configuration Based on Trial Data:")
+        print(f"CPU: {num_cpus}\n"
+              f"Concurrent Predictions: {num_concurrent_predictions}\n"
+              f"Intra-parallelism Threads: {intra_threads}\n"
+              f"Inter-parallelism Threads: {inter_threads}\n"
+              f"Stations: {num_stations}\n"
+              f"Total Runtime (s): {total_runtime}")
+
+        return int(float(num_cpus)), int(float(num_concurrent_predictions)), int(float(intra_threads)), int(float(inter_threads)), int(float(num_stations))
+    
+    def find_optimal_for(self, cpu: int, station_count: int):
+        """Finds the optimal configuration for a given number of CPUs and stations."""
+        if cpu is None or station_count is None:
+            raise ValueError("Error: CPU and station_count must have valid values.")
+
+        file_path = f"{self.eval_sys_results_dir}/optimal_configurations_cpu.csv"
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"[{datetime.now()}] Error: The file '{file_path}' does not exist. Ensure it is in the correct directory.")
+
+        df_optimal = pd.read_csv(file_path)
+
+        # Convert relevant columns to numeric
+        df_optimal["Number of Stations Used"] = pd.to_numeric(df_optimal["Number of Stations Used"], errors="coerce")
+        df_optimal["Number of CPUs Allocated for Ray to Use"] = pd.to_numeric(df_optimal["Number of CPUs Allocated for Ray to Use"], errors="coerce")
+        df_optimal["Number of Stations Running Predictions Concurrently"] = pd.to_numeric(df_optimal["Number of Stations Running Predictions Concurrently"], errors="coerce")
+        df_optimal["Total Run time for Picker (s)"] = pd.to_numeric(df_optimal["Total Run time for Picker (s)"], errors="coerce")
+
+        filtered_df = df_optimal[
+            (df_optimal["Number of CPUs Allocated for Ray to Use"] == cpu) &
+            (df_optimal["Number of Stations Used"] == station_count)]
+
+        if filtered_df.empty:
+            raise ValueError("No matching configuration found. Please enter a valid entry.")
+
+        best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
+
+        print("\nBest Configuration for Requested Input Parameters Based on Trial Data:")
+        print(f"CPU: {cpu}\n"
+              f"Concurrent Predictions: {best_config['Number of Stations Running Predictions Concurrently']}\n"
+              f"Intra-parallelism Threads: {best_config['Intra-parallelism Threads']}\n"
+              f"Inter-parallelism Threads: {best_config['Inter-parallelism Threads']}\n"
+              f"Stations: {station_count}\n"
+              f"Total Runtime (s): {best_config['Total Run time for Picker (s)']}")
+
+        return int(float(cpu)), int(float(best_config["Number of Stations Running Predictions Concurrently"])), int(float(best_config["Intra-parallelism Threads"])), int(float(best_config["Inter-parallelism Threads"])), int(float(station_count))
+
+
+class OptimalGPUConfigurationFinder:
+    """Finds the optimal GPU configuration based on evaluation system results."""
+
+    def __init__(self, eval_sys_results_dir: str):
+        if not eval_sys_results_dir or not os.path.isdir(eval_sys_results_dir):
+            raise ValueError(f"Error: The provided directory path '{eval_sys_results_dir}' is invalid or does not exist.")
+        self.eval_sys_results_dir = eval_sys_results_dir
+
+    def find_best_overall_usecase(self):
+        """Finds the best overall GPU configuration from evaluation results."""
+        file_path = f"{self.eval_sys_results_dir}/best_overall_usecase_gpu.csv"
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"[{datetime.now()}] Error: The file '{file_path}' does not exist. Ensure it is in the correct directory.")
+
+        df_best_overall = pd.read_csv(file_path, header=None, index_col=0)
+        best_config_dict = df_best_overall.to_dict()[1]
+
+        num_cpus = best_config_dict.get("Number of CPUs Allocated for Ray to Use")
+        num_concurrent_predictions = best_config_dict.get("Number of Stations Running Predictions Concurrently")
+        intra_threads = best_config_dict.get("Intra-parallelism Threads")
+        inter_threads = best_config_dict.get("Inter-parallelism Threads")
+        num_stations = best_config_dict.get("Number of Stations Used")
+        total_runtime = best_config_dict.get("Total Run time for Picker (s)")
+        vram_used = best_config_dict.get("VRAM Used Per Task")
+        num_gpus = ast.literal_eval(best_config_dict.get("GPUs Used"))
+
+        print("\nBest Overall Usecase Configuration Based on Trial Data:")
+        print(f"CPU: {num_cpus}\n"
+              f"GPU ID(s): {num_gpus}\n"
+              f"Concurrent Predictions: {num_concurrent_predictions}\n"
+              f"Intra-parallelism Threads: {intra_threads}\n"
+              f"Inter-parallelism Threads: {inter_threads}\n"
+              f"Stations: {num_stations}\n"
+              f"VRAM Used per Task: {vram_used}\n"
+              f"Total Runtime (s): {total_runtime}")
+
+        return int(float(num_cpus)), int(float(num_concurrent_predictions)), int(float(intra_threads)), int(float(inter_threads)), num_gpus, int(float(vram_used)), int(float(num_stations))
+
+    def find_optimal_for(self, num_cpus: int, gpu_list: list, station_count: int):
+        """Finds the optimal configuration for a given number of CPUs, GPUs, and stations."""
+        if num_cpus is None or station_count is None or gpu_list is None:
+            raise ValueError("Error: num_cpus, station_count, and gpu_list must have valid values.")
+
+        file_path = f"{self.eval_sys_results_dir}/optimal_configurations_gpu.csv"
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"[{datetime.now()}] Error: The file '{file_path}' does not exist. Ensure it is in the correct directory.")
+
+        df_optimal = pd.read_csv(file_path)
+
+        # Convert relevant columns to numeric, handling NaNs
+        df_optimal["Number of Stations Used"] = pd.to_numeric(df_optimal["Number of Stations Used"], errors="coerce")
+        df_optimal["Number of CPUs Allocated for Ray to Use"] = pd.to_numeric(df_optimal["Number of CPUs Allocated for Ray to Use"], errors="coerce")
+        df_optimal["Number of Stations Running Predictions Concurrently"] = pd.to_numeric(df_optimal["Number of Stations Running Predictions Concurrently"], errors="coerce")
+        df_optimal["Total Run time for Picker (s)"] = pd.to_numeric(df_optimal["Total Run time for Picker (s)"], errors="coerce")
+        df_optimal["VRAM Used Per Task"] = pd.to_numeric(df_optimal["VRAM Used Per Task"], errors="coerce")
+
+        # Convert "GPUs Used" from string representation to list
+        df_optimal["GPUs Used"] = df_optimal["GPUs Used"].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
+
+        # Convert GPU lists to tuples for comparison
+        df_optimal["GPUs Used"] = df_optimal["GPUs Used"].apply(lambda x: tuple(x) if isinstance(x, list) else (x,))
+
+        # Ensure gpu_list is in tuple format for comparison
+        gpu_list_tuple = tuple(gpu_list) if isinstance(gpu_list, list) else (gpu_list,)
+
+        filtered_df = df_optimal[
+            (df_optimal["Number of CPUs Allocated for Ray to Use"] == num_cpus) &
+            (df_optimal["GPUs Used"] == gpu_list_tuple) &
+            (df_optimal["Number of Stations Used"] == station_count)
+        ]
+
+        if filtered_df.empty:
+            raise ValueError("No matching configuration found. Please enter a valid entry.")
+
+        best_config = filtered_df.nsmallest(1, "Total Run time for Picker (s)").iloc[0]
+
+        print("\nBest Configuration for Requested Application Usecase Based on Trial Data:")
+        print(f"CPU: {num_cpus}\n"
+              f"GPU: {gpu_list}\n"
+              f"Concurrent Predictions: {best_config['Number of Stations Running Predictions Concurrently']}\n"
+              f"Intra-parallelism Threads: {best_config['Intra-parallelism Threads']}\n"
+              f"Inter-parallelism Threads: {best_config['Inter-parallelism Threads']}\n"
+              f"Stations: {station_count}\n"
+              f"VRAM Used per Task: {best_config['VRAM Used Per Task']}\n"
+              f"Total Runtime (s): {best_config['Total Run time for Picker (s)']}")
+
+        return int(float(best_config["Number of CPUs Allocated for Ray to Use"])), \
+               int(float(best_config["Number of Stations Running Predictions Concurrently"])), \
+               int(float(best_config["Intra-parallelism Threads"])), \
+               int(float(best_config["Inter-parallelism Threads"])), \
+               gpu_list, \
+               int(float(best_config["VRAM Used Per Task"])), \
+               int(float(station_count))
+               
+               
 def run_mseed_worker(input_dir, output_dir, log_file, P_threshold, S_threshold, p_model, s_model, 
                      num_concurrent_predictions, ray_cpus, use_gpu, gpu_id, gpu_memory_limit_mb, 
                      specific_stations, cpu_id_list):
@@ -1376,7 +1541,7 @@ def run_EQCCT_mseed(
     if use_gpu is False:
         print(f"\nRunning EQCCT over MSeed Files with CPUs") 
         if best_usecase_config is True:
-            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(True, csv_dir)
+            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = (True, csv_dir)
             print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads")
             tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
             mseed_predictor(input_dir=input_dir, 
