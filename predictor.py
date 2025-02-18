@@ -1011,7 +1011,8 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
                         target=run_prediction,
                         args=(input_dir, output_dir, log_filepath, P_threshold, 
                             S_threshold, p_model_filepath, s_model_filepath, 
-                            conc_predictions, len(cpu_list), True, num_stations, cpu_list, csv_filepath, intra_threads, inter_threads, True, gpu_memory_limit_mb, selected_gpus)
+                            conc_predictions, len(cpu_list), True, num_stations, 
+                            cpu_list, csv_filepath, intra_threads, inter_threads, True, gpu_memory_limit_mb, selected_gpus)
                     )
                     process.start()
                     process.join()  # Wait for process to complete
@@ -1034,6 +1035,7 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
                 f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase_gpu.csv")
                     
 class EQCCTMSeedRunner():  
+    """run_EQCCT_Mseed class for running the run_EQCCT_Mseed functions for multiple instances of the class"""
     def __init__(self, # self is 'this instance' of the class 
                 use_gpu: bool, 
                 input_dir: str, 
@@ -1146,6 +1148,177 @@ class EQCCTMSeedRunner():
         else: 
             self.configure_cpu()
 
+
+class EvaluateSystem(): 
+    """Evaluate System class for running the evaluation system functions for multiple instances of the class"""
+    def __init__(self,
+                 eval_mode: str,
+                 input_dir: str,
+                 output_dir: str,
+                 log_filepath: str,
+                 csv_dir: str, 
+                 p_model_filepath: str, 
+                 s_model_filepath: str, 
+                 P_threshold: float = 0.001, 
+                 S_threshold: float = 0.02, 
+                 intra_threads: int = 1,
+                 inter_threads: int = 1,
+                 stations2use:int = None, 
+                 cpu_id_list:list = [1], 
+                 set_vram_mb:float = None, 
+                 selected_gpus:list = None): 
+        
+        valid_modes = {"cpu", "gpu"}
+        if eval_mode not in valid_modes: 
+            raise ValueError(f"Invalid mode '{mode}'. Choose either 'cpu' or 'gpu'.")
+            exit()
+        
+        self.eval_mode = eval_mode.lower()
+        self.intra_threads = intra_threads
+        self.inter_threads = inter_threads
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        self.log_filepath = log_filepath
+        self.csv_dir = csv_dir
+        self.P_threshold = P_threshold
+        self.S_threshold = S_threshold
+        self.p_model_filepath = p_model_filepath
+        self.s_model_filepath = s_model_filepath
+        self.stations2use = stations2use
+        self.cpu_id_list = cpu_id_list
+        self.set_vram_mb = set_vram_mb
+        self.selected_gpus = selected_gpus
+        self.cpu_count = len(cpu_id_list)
+        self.stations2use_list = list(range(1, 11)) + list(range(15, 50, 5)) if stations2use is None else generate_station_list(stations2use)
+        
+    def _generate_stations_list(self):
+        """Generates station list"""
+        if self.station2use is None: 
+            return list(range(1, 11)) + list(range(15, 50, 5))
+        return generate_station_list(self.stations2use)
+    
+    def _prepare_environment(self):
+        """Removed 'output_dir' so that there is no conflicts in the save for a clean output return"""
+        remove_directory(self.output_dir)
+    
+    def _run_trial(self, trial_num, cpus_to_use, num_stations, num_concurrent_predictions, use_gpu=False, gpu_memory_limit_mb=None):
+        """Runs a trial for evaluation script with a controlled cpu process"""
+        print(f"\nTrial Number: {trial_num}")
+        
+        process = multiprocessing.Process(
+            target=run_prediction,
+            args=(self.input_dir, self.output_dir, self.log_filepath, self.P_threshold, self.S_threshold, 
+                  self.p_model_filepath, self.s_model_filepath, self.num_concurrent_predictions, len(cpus_to_use),
+                  use_gpu, num_stations, cpus_to_use, f"{self.csv_dir}/{self.eval_mode}_test_results.csv",
+                  self.intra_threads, self.inter_threads, use_gpu, gpu_memory_limit_mb, self.selected_gpus))
+        process.start()
+        process.join()
+        
+        if process.exitcode == 0:
+            update_csv(f"{self.csv_dir}/{self.eval_mode}_test_results.csv", trial_num, self.intra_threads, self.inter_threads, 1, "", self.output_dir, use_gpu, gpu_memory_limit_mb)
+        else:
+            update_csv(f"{self.csv_dir}/{self.eval_mode}_test_results.csv", trial_num, self.intra_threads, self.inter_threads, 0, process.exitcode, self.output_dir, use_gpu, gpu_memory_limit_mb)
+        
+        
+            
+    def evaluate_cpu(self): 
+        """Evaluate system parallelization using CPUs"""
+        print(f"Evaluating System Parallelization Capability using CPUs\n")
+        
+        self._prepare_environment() # Remove outputs dir 
+        
+        # Create test results csv 
+        csv_filepath = f"{self.csv_dir}/cpu_test_results.csv"
+        prepare_csv(csv_filepath, False)
+        
+        trial_num = 1
+        for i in range(1, self.cpu_count+1):
+            cpus_to_use = self.cpu_list[:i]
+            for num_stations in self.stations2use_list: 
+                concurrent_predictions_list = generate_station_list(num_stations)
+                for num_concurrent_predictions in concurrent_predictions_list: 
+                    self._run_trial(trial_num, cpus_to_use, num_stations, num_concurrent_predictions)
+                    trial_num += 1 
+                    
+        print(f"[{datetime.now()}] Testing complete.\n[{datetime.now()}] Finding Optimal Configurations...")
+        # Compute optimal configurations (CPU)
+        df = pd.read_csv(csv_filepath)
+        optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_cpu(df)
+        optimal_configuration_df.to_csv(f"{self.csv_dir}/optimal_configurations_cpu.csv")
+        best_overall_usecase_df.to_csv(f"{self.csv_dir}/best_overall_usecase_cpu.csv")
+        print(f"[{datetime.now()}] Optimal Configurations Found. Findings saved to:\n" 
+                f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {self.csv_dir}/optimal_configurations_cpu.csv\n" 
+                f" 2) Best Overall Usecase Configuration: {self.csv_dir}/best_overall_usecase_cpu.csv")
+        
+    def evaluate_gpu(self): 
+        """Evaluate system parallelization using GPUs"""
+        print(f"Evaluating System Parallelization Capability using GPUs\n")
+        
+        self._prepare_environment() # Remove outputs dir 
+        
+        # Create test results csv 
+        csv_filepath = f"{self.csv_dir}/gpu_test_results.csv"
+        prepare_csv(csv_filepath, True)
+        
+        free_vram_mb = self.set_vram_mb if self.set_vram_mb else self.calculate_vram()
+        
+        self.selected_gpus = self.selected_gpus if self.selected_gpus else list_gpu_ids()
+        print(f"[{datetime.now()}] Using GPU(s): {self.selected_gpus}")
+        
+        trial_num = 1 
+        for stations in self.stations2use_list:
+            concurrent_predictions_list = generate_station_list(stations)
+            for predictions in concurrent_predictions_list:
+                vram_per_task_mb = free_vram_mb / predictions
+                step_size = vram_per_task_mb * 0.05
+                vram_steps = np.arange(step_size, vram_per_task_mb + step_size, step_size)
+
+                for gpu_memory_limit_mb in vram_steps:
+                    print(f"\n[{datetime.now()}] VRAM Limited to {gpu_memory_limit_mb / 1024:.2f} GB per Task")
+                    print(f"\nTrial Number: {trial_num}")
+                    process = multiprocessing.Process(
+                        target=run_prediction,
+                        args=(self.input_dir, self.output_dir, self.log_filepath, self.P_threshold,
+                              self.S_threshold, self.p_model_filepath, self.s_model_filepath,
+                              predictions, self.cpu_count, True, stations, self.cpu_id_list, csv_filepath,
+                              self.intra_threads, self.inter_threads, True, gpu_memory_limit_mb, self.selected_gpus)
+                    )
+                    process.start()
+                    process.join()
+
+                    # Handle exit codes
+                    if process.exitcode == 0:
+                        update_csv(csv_filepath, trial_num, self.intra_threads, self.inter_threads, 1, "", self.output_dir, True, gpu_memory_limit_mb)
+                    else:
+                        update_csv(csv_filepath, trial_num, self.intra_threads, self.inter_threads, 0, process.exitcode, self.output_dir, True, gpu_memory_limit_mb)
+                    trial_num += 1
+
+        print(f"[{datetime.now()}] GPU Testing complete. Finding optimal configurations...")
+        df = pd.read_csv(csv_filepath)
+        optimal_configuration_df, best_overall_usecase_df = find_optimal_configurations_gpu(df)
+        optimal_configuration_df.to_csv(f"{self.csv_dir}/optimal_configurations_gpu.csv")
+        best_overall_usecase_df.to_csv(f"{self.csv_dir}/best_overall_usecase_gpu.csv")
+
+        print(f"[{datetime.now()}] Optimal configurations found and saved.")
+    
+    def evaluate(self):
+        if self.eval_mode == "cpu":
+            self.evaluate_cpu()
+        elif self.eval_mode == "gpu":
+            self.evaluate_gpu()
+        else: 
+            exit()
+        
+    def calculate_vram(self):
+        """Calculate available VRAM for GPU testing."""
+        print(f"[{datetime.now()}] Utilizing available VRAM...")
+        total_vram, available_vram = get_gpu_vram()
+        print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB.")
+        print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB.")
+
+        free_vram = total_vram * 0.9485 if available_vram / total_vram >= 0.9486 else available_vram
+        print(f"[{datetime.now()}] Using up to {round(free_vram, 2)} GB of VRAM.")
+        return free_vram * 1024  # Convert to MB
 
 def run_mseed_worker(input_dir, output_dir, log_file, P_threshold, S_threshold, p_model, s_model, 
                      num_concurrent_predictions, ray_cpus, use_gpu, gpu_id, gpu_memory_limit_mb, 
