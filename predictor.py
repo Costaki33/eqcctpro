@@ -7,6 +7,7 @@ import time
 import glob
 import obspy
 import shutil
+import psutil
 import random
 import logging
 import platform
@@ -408,11 +409,11 @@ def tf_environ(gpu_id, gpu_memory_limit_mb=None, gpus_to_use=None, intra_threads
         print(f"[{datetime.now()}] GPU processing disabled, using CPU.")
     if intra_threads is not None:
         tf.config.threading.set_intra_op_parallelism_threads(intra_threads)
-        print(f"[{datetime.now()}] Intraparallelism thread successfully set")
+        print(f"[{datetime.now()}] Intraparallelism thread successfully set.")
     if inter_threads is not None:
         tf.config.threading.set_inter_op_parallelism_threads(inter_threads)
-        print(f"[{datetime.now()}] Interparallelism thread successfully set")
-    print(f"[{datetime.now()}] Tensorflow successfully set up for model operations")
+        print(f"[{datetime.now()}] Interparallelism thread successfully set.")
+    print(f"[{datetime.now()}] Tensorflow successfully set up for model operations.")
 
 
 def load_eqcct_model(input_modelP, input_modelS, log_file="results/logs/model.log"):
@@ -1032,7 +1033,148 @@ def evaluate_system(eval_mode:str, intra_threads:int, inter_threads:int, input_d
                 f" 1) Optimal CPU/Station/Concurrent Prediction Configurations: {csv_dir}/optimal_configurations_gpu.csv\n" 
                 f" 2) Best Overall Usecase Configuration: {csv_dir}/best_overall_usecase_gpu.csv")
                     
+class EQCCTMSeedRunner():  
+    def __init__(self, # self is 'this instance' of the class 
+                use_gpu: bool, 
+                input_dir: str, 
+                output_dir: str, 
+                log_filepath: str, 
+                p_model_filepath: str, 
+                s_model_filepath: str, 
+                number_of_concurrent_predictions: int, 
+                intra_threads: int = 1, 
+                inter_threads: int = 1, 
+                P_threshold: float = 0.001, 
+                S_threshold: float = 0.02,
+                specific_stations: str = None,
+                csv_dir: str = None,
+                best_usecase_config: bool = None,
+                set_vram_mb: float = None,
+                selected_gpus: list = None,
+                cpu_id_list: list = [1]): 
+         
+        self.use_gpu = use_gpu # 'this instance' of the classes object, use_gpu = use_gpu 
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        self.log_filepath = log_filepath
+        self.p_model_filepath = p_model_filepath
+        self.s_model_filepath = s_model_filepath
+        self.number_of_concurrent_predictions = number_of_concurrent_predictions
+        self.intra_threads = intra_threads
+        self.inter_threads = inter_threads
+        self.P_threshold = P_threshold
+        self.S_threshold = S_threshold
+        self.specific_stations = specific_stations
+        self.csv_dir = csv_dir
+        self.best_usecase_config = best_usecase_config
+        self.set_vram_mb = set_vram_mb
+        self.selected_gpus = selected_gpus
+        self.cpu_id_list = cpu_id_list 
+        self.cpu_count = len(cpu_id_list) 
+         
+    def configure_cpu(self): 
+        print(f"\nRunning EQCCT over MSeed Files with CPUs...")
+        if self.best_usecase_config:
+            cpus_to_use, num_concurrent_predictions, intra, inter, station_count = find_optimal_configuration_cpu(True, self.csv_dir)
+            print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, and {inter} Inter Threads...")
+            tf_environ(gpu_id=-1, intra_threads=intra, inter_threads=inter)
+            self.run_mseed_predictor(cpus_to_use, num_concurrent_predictions)
+        else:
+            tf_environ(gpu_id=-1, intra_threads=self.intra_threads, inter_threads=self.inter_threads) 
+            self.run_mseed_predictor(self.cpu_count, self.number_of_concurrent_predictions)
             
+    def configure_gpu(self):
+        print(f"\nRunning EQCCT over MSeed Files with GPUs...")
+        if self.best_usecase_config: 
+            result = find_optimal_configuration_gpu(True, self.csv_dir)
+            if result is None:
+                print(f"\n[{datetime.now()}] Error: Could not retrieve an optimal GPU configuration. Please check the CSV file and try again.")
+                exit()  # Exit gracefully
+            # Unpack values only if result is valid
+            cpus_to_use, num_concurrent_predictions, intra, inter, gpus, vram_mb, station_count = result
+            print(f"\n[{datetime.now()}] Using {cpus_to_use} CPUs, {num_concurrent_predictions} Conc. Predictions, {intra} Intra Threads, {inter} Inter Threads, {gpus} GPU IDs, and {vram_mb} MB VRAM per Task...")
+            tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_mb, gpus_to_use=gpus, intra_threads=intra, inter_threads=inter)
+            self.run_mseed_predictor(cpus_to_use, num_concurrent_predictions, use_gpu=True, gpu_id=gpus, gpu_memory_limit_mb=vram_mb)
+        else: 
+            free_vram_mb = self.set_vram_mb if self.set_vram_mb is not None else self.calculate_vram() 
+            selected_gpus = self.selected_gpus if self.selected_gpus else list_gpu_ids() # will give a list back of all available GPUs and use them all
+            print(f"[{datetime.now()}] Using GPU(s): {selected_gpus}")
+            vram_per_task_mb = free_vram_mb / self.number_of_concurrent_predictions
+            tf_environ(gpu_id=1, gpu_memory_limit_mb=vram_per_task_mb, gpus_to_use=selected_gpus, intra_threads=self.intra_threads, inter_threads=self.inter_threads)
+            self.run_mseed_predictor(self.cpu_count, self.number_of_concurrent_predictions, use_gpu=True, gpu_id=selected_gpus, gpu_memory_limit_mb=vram_per_task_mb)
+            
+    def calculate_vram(self):
+        print(f"[{datetime.now()}] Utilizing available VRAM within Ray Memory Usage Threshold Limit of 0.95...")
+        total_vram, available_vram = get_gpu_vram()
+        print(f"[{datetime.now()}] Total VRAM: {total_vram:.2f} GB")
+        print(f"[{datetime.now()}] Available VRAM: {available_vram:.2f} GB")
+
+        free_vram = total_vram * 0.9485 if available_vram / total_vram >= 0.9486 else available_vram
+        print(f"[{datetime.now()}] Using {round(free_vram, 2)} GB VRAM (within 94.85% VRAM threshold).")
+        return free_vram * 1024  # Convert to MB
+
+    def run_mseed_predictor(self, ray_cpus, num_concurrent_predictions, use_gpu=False, gpu_id=None, gpu_memory_limit_mb=None):
+        """
+        Run the mseed_predictor using multiprocessing while limiting it to specific CPU cores.
+        """
+        process = multiprocessing.Process(
+            target=run_mseed_worker,
+            args=(
+                self.input_dir,
+                self.output_dir,
+                self.log_filepath,
+                self.P_threshold,
+                self.S_threshold,
+                self.p_model_filepath,
+                self.s_model_filepath,
+                num_concurrent_predictions,
+                ray_cpus,
+                use_gpu,
+                gpu_id,
+                gpu_memory_limit_mb,
+                self.specific_stations,
+                self.cpu_id_list  # Pass the limited CPU IDs
+            )
+        )
+
+        process.start()
+        process.join()  # Wait for the process to complete
+
+    def run_eqcctpro(self): 
+        if self.use_gpu: 
+            self.configure_gpu()
+        else: 
+            self.configure_cpu()
+
+
+def run_mseed_worker(input_dir, output_dir, log_file, P_threshold, S_threshold, p_model, s_model, 
+                     num_concurrent_predictions, ray_cpus, use_gpu, gpu_id, gpu_memory_limit_mb, 
+                     specific_stations, cpu_id_list):
+    """
+    Worker function to execute mseed_predictor within a specific CPU affinity.
+    """
+    # Set CPU affinity
+    process = psutil.Process(os.getpid())
+    process.cpu_affinity(cpu_id_list)  # Limit process to the given CPU IDs
+
+    # Run the predictor
+    mseed_predictor(
+        input_dir=input_dir, 
+        output_dir=output_dir, 
+        log_file=log_file, 
+        P_threshold=P_threshold, 
+        S_threshold=S_threshold, 
+        p_model=p_model, 
+        s_model=s_model, 
+        number_of_concurrent_predictions=num_concurrent_predictions, 
+        ray_cpus=ray_cpus,
+        use_gpu=use_gpu,
+        gpu_id=gpu_id,
+        gpu_memory_limit_mb=gpu_memory_limit_mb,
+        specific_stations=specific_stations
+    )
+    
+                
 def run_EQCCT_mseed(
         use_gpu: bool, 
         input_dir: str, 
@@ -1234,10 +1376,10 @@ def mseed_predictor(input_dir='downloads_mseeds',
     """ 
     if use_gpu is False: 
         ray.init(ignore_reinit_error=True, num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using CPUs
-        print(f"[{datetime.now()}] Ray Sucessfully Initialized with {ray_cpus} CPUs")
+        print(f"[{datetime.now()}] Ray Sucessfully Initialized with {ray_cpus} CPU(s).")
     elif use_gpu is True: 
         ray.init(ignore_reinit_error=True, num_gpus=len(gpu_id), num_cpus=ray_cpus, logging_level=logging.FATAL, log_to_driver=False) # Ray initalization using GPUs 
-        print(f"[{datetime.now()}] Ray Sucessfully Initialized with {len(gpu_id)} GPU(s) and {ray_cpus} CPU(s)")
+        print(f"[{datetime.now()}] Ray Sucessfully Initialized with {len(gpu_id)} GPU(s) and {ray_cpus} CPU(s).")
         
     args = {
     "input_dir": input_dir,
@@ -1255,6 +1397,7 @@ def mseed_predictor(input_dir='downloads_mseeds',
     "s_model": s_model,
     "stations_filters": stations_filters
     }
+
 
     # Ensure Output Dir exists 
     os.makedirs(output_dir, exist_ok=True)
