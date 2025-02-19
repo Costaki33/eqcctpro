@@ -1,6 +1,6 @@
 
 import os 
-from predictor import EQCCTMSeedRunner, EvaluateSystem, OptimalCPUConfigurationFinder, OptimalGPUConfigurationFinder
+from eqcctpro import EQCCTMSeedRunner, EvaluateSystem, OptimalCPUConfigurationFinder, OptimalGPUConfigurationFinder
 input_mseed_directory_path = '/home/skevofilaxc/eqcctpro/mseed/20241215T115800Z_20241215T120100Z'   
 output_pick_directory_path = '/home/skevofilaxc/eqcctpro/outputs'
 log_file_path = '/home/skevofilaxc/eqcctpro/outputs/eqcctpro.log'
@@ -57,8 +57,8 @@ eqcct_runner.run_eqcctpro()
 
 
 # gpu_finder = OptimalGPUConfigurationFinder(csv_filepath)
-# # best_gpu_config = gpu_finder.find_best_overall_usecase()
-# # print(best_gpu_config)
+# best_gpu_config = gpu_finder.find_best_overall_usecase()
+# print(best_gpu_config)
 
 # optimal_gpu_config = gpu_finder.find_optimal_for(num_cpus=1, gpu_list=[0], station_count=1)
 # print(optimal_gpu_config)
