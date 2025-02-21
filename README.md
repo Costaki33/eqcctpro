@@ -10,13 +10,13 @@ EQCCTPro is a high-performace seismic event detection and processing framework t
 - Efficient handling of large-scale seismic data
 
 ## Installation
-To install `eqcctpro`, there are two installation approaches: 
+To install `EQCCTPro`, there are two installation approaches: 
 1. Install **EQCCTPro** out the box with no sample waveform data to test the application with
 2. Install **EQCCTPro** with the sample waveform data as provided from the Github folder
 
-It is **highly** recommended you pull the `EQCCTPro` folder to gain access to the sample waveform data to help you get acquainted with **eqcctpro** and its capabilites.
+It is **highly** recommended you pull the `EQCCTPro` folder to gain access to the sample waveform data to help you get acquainted with **EQCCTPro** and its capabilites.
 
-If you wish to install **only the eqcctpro Python package and use it out of the box (method 1)**, run **`pip install eqcctpro`**. **You must have at least Python verison 3.10.14 for the application to run**. 
+If you wish to install **only the EQCCTPro Python package and use it out of the box (method 1)**, run **`pip install eqcctpro`**. **You must have at least Python verison 3.10.14 for the application to run**. 
 You can install Python 3.10.14 using either traditional methods or do the following commands: 
 
 ```sh
@@ -26,7 +26,7 @@ You can install Python 3.10.14 using either traditional methods or do the follow
 Python 3.10.14 (it should return)
 [skevofilaxc] pip install eqcctpro
 ```
-You will have access to **eqcctpro** and its capabilities, however, it is **highly** recommended you pull the `EQCCTPro` folder to gain access to the sample waveform data and to get acquainted with **eqcctpro**. 
+You will have access to **EQCCTPro** and its capabilities, however, it is **highly** recommended you pull the `EQCCTPro` folder to gain access to the sample waveform data and to get acquainted with **EQCCTPro**. 
 You can pull the `EQCCTPro` folder by running the following commands: 
 
 ```sh
@@ -39,8 +39,8 @@ You can pull the `EQCCTPro` folder by running the following commands:
 
 
 If you wish to install **EQCCTPro** with the sample waveform data as originally intended, and or are having trouble installing Python 3.10.14, there has been a precreated conda environment under the `EQCCTPro` folder that will install the necessary packages
-and dependencies needed for **EQCCTPro** to run. 
-You can pull the `EQCCTPro` folder using the following commands: 
+and dependencies needed for **EQCCTPro** to run (method 2). 
+You can pull the `EQCCTPro` folder, create the precreated conda environment, and activate it using the following commands: 
 
 ```sh
 [skevofilaxc] mkdir my_work_directory
@@ -52,11 +52,11 @@ You can pull the `EQCCTPro` folder using the following commands:
 [skevofilaxc] conda activate eqcctpro
 ```
 
-After creating and activating the conda environment, install the **eqcctpro Python package** using the following command: 
+After creating and activating the conda environment, install the **EQCCTPro Python package** using the following command: 
 ```sh
 [skevofilaxc] pip install eqcctpro
 ```
-The pip package will install the remaining packages needed for **EQCCTPro** to work. More information on the package can be found at our PyPi project link [eqcctpro](https://pypi.org/project/eqcctpro/).
+The pip package will install the remaining packages needed for **EQCCTPro** to work. More information on the package can be found at our PyPi project link [EQCCTPro](https://pypi.org/project/eqcctpro/).
 
 ## Creating a Test Workspace Environment
 It's highly suggested to create a workspace environment to first understand how eqcctpro works. 
