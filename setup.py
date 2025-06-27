@@ -30,7 +30,7 @@ with open("README.md", "r") as f:
 
 setup(
     name="eqcctpro",
-    version="0.4.1",
+    version="0.4.3",
     packages=find_packages(),
     install_requires=[
         "numpy==1.26.4",
@@ -49,7 +49,7 @@ setup(
         "tensorboard-data-server==0.7.2",
         "silence-tensorflow==1.2.3",
         "scipy==1.15.1",
-        "protobuf==4.25.6",
+        "protobuf==4.25.8",
         "grpcio==1.70.0",
         "absl-py==2.1.0",
         "h5py==3.12.1",
